@@ -1,0 +1,186 @@
+---
+title: "Debuta Backend Environment Configuration Reference"
+sidebarTitle: "Configuration"
+description: "Complete reference for all environment variables in the Debuta backend .env file, including MongoDB, JWT, Cloudinary, email, CORS, and social OAuth settings."
+---
+
+The Debuta backend is configured entirely through environment variables loaded from a `.env` file at startup using `dotenv`. Copy `.env.example` to `.env` and fill in your own values before starting the server. The sections below document every variable, its purpose, and its expected format.
+
+<Warning>
+  Never commit your `.env` file to version control. It contains secrets (JWT signing key, database credentials, API keys) that would compromise your application if exposed. The `.env.example` file with placeholder values is safe to commit — `.env` itself must remain in `.gitignore`.
+</Warning>
+
+## Server
+
+<ParamField path="PORT" type="number" default="3000">
+  The TCP port the HTTP server listens on. Both Express and Socket.io share this port. Change it if `3000` is already in use on your machine.
+</ParamField>
+
+<ParamField path="NODE_ENV" type="string" required>
+  Runtime environment. Accepted values are `development` and `production`.
+
+  - In **`development`**, CORS is fully open — all origins are allowed for both HTTP requests and Socket.io connections.
+  - In **`production`**, only origins listed in `ALLOWED_ORIGINS` are permitted. Any other origin receives a CORS error.
+</ParamField>
+
+## Database
+
+<ParamField path="MONGO_URI" type="string" required>
+  Full MongoDB connection string. For MongoDB Atlas it follows the `mongodb+srv://` format:
+
+  ```
+  mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<dbname>?retryWrites=true&w=majority
+  ```
+
+  The server uses a linear backoff retry loop (up to 5 attempts, 3 s apart) when the initial connection fails, so transient DNS or network issues at startup are handled gracefully.
+</ParamField>
+
+## Security
+
+<ParamField path="JWT_SECRET" type="string" required>
+  The secret key used to sign and verify all JSON Web Tokens — both for HTTP API routes and Socket.io handshakes. In production this must be a long, randomly generated string (at least 32 characters). You can generate one with:
+
+  ```bash
+  node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+  ```
+</ParamField>
+
+<ParamField path="JWT_EXPIRES_IN" type="string" default="7d">
+  Controls how long issued tokens remain valid. Uses the [ms](https://github.com/vercel/ms) / jsonwebtoken duration format — for example `7d`, `24h`, `30m`. After expiry the client must log in again to obtain a fresh token.
+</ParamField>
+
+<ParamField path="ALLOWED_ORIGINS" type="string">
+  Comma-separated list of origins that are allowed to make requests when `NODE_ENV=production`. No spaces between values. Example:
+
+  ```
+  ALLOWED_ORIGINS=https://admin.debuta.app,https://app.debuta.app
+  ```
+
+  This value is consumed by both the Express CORS middleware and the Socket.io CORS configuration. Leave it empty in development — all origins are permitted when `NODE_ENV=development`.
+</ParamField>
+
+## Cloudinary
+
+Cloudinary is used for all photo storage: profile pictures, gallery photos, cover photos, and post images. Images are uploaded as buffers (via Multer `memoryStorage`) or as base64 strings depending on the endpoint.
+
+<ParamField path="CLOUDINARY_CLOUD_NAME" type="string" required>
+  Your Cloudinary cloud name. Found on the Cloudinary dashboard under **Account Details**.
+</ParamField>
+
+<ParamField path="CLOUDINARY_API_KEY" type="string" required>
+  Your Cloudinary API key. Found in the same dashboard section alongside the cloud name.
+</ParamField>
+
+<ParamField path="CLOUDINARY_API_SECRET" type="string" required>
+  Your Cloudinary API secret. Treat this like a password — it authorises destructive operations such as image deletion.
+</ParamField>
+
+All three values are read directly by `src/helpers/cloudinary.js` on startup:
+
+```js
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure:     true,
+});
+```
+
+## Email
+
+Debuta uses Nodemailer with Gmail SMTP to send password-reset codes. The email is a branded HTML template with a 6-digit code that expires in 15 minutes.
+
+<ParamField path="EMAIL_USER" type="string" required>
+  The Gmail address that sends outbound emails. Example: `noreply@debuta.app`.
+</ParamField>
+
+<ParamField path="EMAIL_PASS" type="string" required>
+  The **Gmail app password** for `EMAIL_USER` — not the regular Gmail account password.
+</ParamField>
+
+<Tip>
+  Gmail requires an **app password** (a 16-character code generated in your Google Account under **Security → 2-Step Verification → App passwords**) rather than your regular login password. Using an app password also means you can revoke email access independently from your main account without changing your password.
+</Tip>
+
+## Admin Panel
+
+These variables configure the initial admin account that is seeded into the database on first run.
+
+<ParamField path="ADMIN_EMAIL" type="string" required>
+  Email address of the default admin account. Example: `admin@debuta.com`.
+</ParamField>
+
+<ParamField path="ADMIN_USERNAME" type="string" required>
+  Username of the default admin account. Example: `admin`.
+</ParamField>
+
+## Social OAuth
+
+<ParamField path="GOOGLE_CLIENT_ID" type="string">
+  OAuth 2.0 client ID from the [Google Cloud Console](https://console.cloud.google.com/). Required for Google Sign-In via the `google-auth-library`. Ends in `.apps.googleusercontent.com`.
+</ParamField>
+
+<ParamField path="FACEBOOK_APP_ID" type="string">
+  App ID from the [Meta for Developers](https://developers.facebook.com/) dashboard. Required for Facebook Login.
+</ParamField>
+
+<ParamField path="FACEBOOK_APP_SECRET" type="string">
+  App secret from the same Meta dashboard. Used server-side to verify Facebook access tokens. Treat this like a password.
+</ParamField>
+
+## Atlas Admin API (Optional)
+
+These three variables are only needed for the `scripts/auto-whitelist.js` helper, which automatically adds the server's current public IP to the MongoDB Atlas IP Access List. This is useful for dynamic-IP environments (local development, ephemeral cloud VMs). If left empty, the whitelist script exits silently and the server starts normally.
+
+<ParamField path="ATLAS_PUBLIC_KEY" type="string">
+  Public key for the MongoDB Atlas Programmatic API. Generated in the Atlas UI under **Access Manager → API Keys**.
+</ParamField>
+
+<ParamField path="ATLAS_PRIVATE_KEY" type="string">
+  Corresponding private key for the Atlas Programmatic API.
+</ParamField>
+
+<ParamField path="ATLAS_PROJECT_ID" type="string">
+  The MongoDB Atlas Project ID (also called Group ID). Found in the Atlas UI under **Project Settings**.
+</ParamField>
+
+## Complete `.env.example`
+
+```bash
+# ── Server ──────────────────────────────────────────────────────────
+PORT=3000
+NODE_ENV=production
+
+# ── Database (MongoDB Atlas) ─────────────────────────────────────────
+MONGO_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<dbname>?retryWrites=true&w=majority
+
+# ── Security ─────────────────────────────────────────────────────────
+JWT_SECRET=tu_secreto_largo_y_seguro_aqui
+JWT_EXPIRES_IN=7d
+
+# Allowed CORS origins (comma-separated, no spaces), production only
+ALLOWED_ORIGINS=https://tu-admin-web.com,https://tu-app-web.com
+
+# ── Cloudinary (Photo storage) ───────────────────────────────────────
+CLOUDINARY_CLOUD_NAME=tu_cloud_name
+CLOUDINARY_API_KEY=tu_api_key
+CLOUDINARY_API_SECRET=tu_api_secret
+
+# ── Email (Password recovery) ────────────────────────────────────────
+EMAIL_USER=tu_email@gmail.com
+EMAIL_PASS=tu_password_de_aplicacion_gmail
+
+# ── Admin Panel (Initial access) ─────────────────────────────────────
+ADMIN_EMAIL=admin@debuta.com
+ADMIN_USERNAME=admin
+
+# ── Social Auth ──────────────────────────────────────────────────────
+GOOGLE_CLIENT_ID=tu_google_client_id.apps.googleusercontent.com
+FACEBOOK_APP_ID=tu_facebook_app_id
+FACEBOOK_APP_SECRET=tu_facebook_app_secret
+
+# ── Atlas Admin API (Optional — dev IP auto-whitelisting) ────────────
+ATLAS_PUBLIC_KEY=
+ATLAS_PRIVATE_KEY=
+ATLAS_PROJECT_ID=
+```

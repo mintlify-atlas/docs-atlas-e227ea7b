@@ -1,0 +1,154 @@
+---
+title: "Discovery Feed — Browse Profiles to Like or Dislike"
+sidebarTitle: "Discover"
+description: "GET /api/users/discover returns geo-filtered, preference-filtered profiles for the swipe feed, with affinity scores, excluding already-seen users."
+---
+
+The discovery feed is the core swiping experience in Debuta. This endpoint returns a ranked list of user profiles tailored to the authenticated user's stored settings — covering geographic radius, age range, gender preference, verification status, and shared interests. Every returned profile includes an `afinidad` (affinity) score object that the client uses to rank cards in the swipe stack.
+
+All filters are read from the user's settings document, which is configured separately via `PUT /api/settings`. There is no way to pass ad-hoc filter parameters on this request.
+
+## Endpoint
+
+<ParamField path="GET /api/users/discover" type="string">
+  Returns paginated user profiles for the swipe feed. Requires a valid Bearer token.
+</ParamField>
+
+### Authentication
+
+All requests must include a valid JWT in the `Authorization` header.
+
+```
+Authorization: Bearer <access_token>
+```
+
+---
+
+## How filtering works
+
+<Steps>
+  <Step title="Load the current user's settings">
+    The server reads the authenticated user's stored settings document to obtain all filter criteria. Settings are managed via `PUT /api/settings`.
+  </Step>
+  <Step title="Apply geospatial filtering">
+    A MongoDB `$geoNear` or `$nearSphere` query filters candidates to those within `max_distance` kilometres of the current user's last known coordinates.
+  </Step>
+  <Step title="Apply preference filters">
+    The following settings are applied as additional query conditions:
+
+    | Setting | Type | Description |
+    |---|---|---|
+    | `max_distance` | `number` | Maximum radius in kilometres |
+    | `min_age` / `max_age` | `number` | Age range derived from `birth_date` |
+    | `show_me` | `string` | Gender(s) to show (`"men"`, `"women"`, `"everyone"`) |
+    | `verified_only` | `boolean` | Restrict to `is_verified: true` profiles |
+    | `has_bio_only` | `boolean` | Restrict to profiles with a non-empty bio |
+    | `min_photos` | `number` | Minimum number of profile photos required |
+    | `looking_for` | `string` | Relationship intention filter |
+    | `interests_filter` | `string[]` | Require at least one shared interest tag |
+  </Step>
+  <Step title="Exclude seen and blocked users">
+    Users the current user has already liked or disliked (recorded in `Match.likes`) are excluded, as are any users in the blocked list and the current user themselves.
+  </Step>
+  <Step title="Compute affinity scores and return">
+    Each remaining candidate receives an `afinidad` score computed server-side. The results are sorted by score descending and returned.
+  </Step>
+</Steps>
+
+---
+
+## Affinity score object
+
+Each profile in the response includes an `afinidad` object:
+
+<ResponseField name="afinidad" type="object">
+  Affinity breakdown for this profile relative to the current user.
+
+  <ResponseField name="score" type="number">
+    Overall numeric affinity score (higher is better).
+  </ResponseField>
+  <ResponseField name="amigosFB" type="boolean">
+    Whether the two users share Facebook mutual friends (if Facebook is linked).
+  </ResponseField>
+  <ResponseField name="interesesComun" type="number">
+    Count of shared interest tags between the two profiles.
+  </ResponseField>
+  <ResponseField name="ciudadComun" type="boolean">
+    `true` if both users list the same city.
+  </ResponseField>
+  <ResponseField name="edadSimilar" type="boolean">
+    `true` if the age difference is within the similarity threshold.
+  </ResponseField>
+  <ResponseField name="resumen" type="string">
+    Short human-readable summary string, e.g. `"3 intereses en común · misma ciudad"`.
+  </ResponseField>
+</ResponseField>
+
+---
+
+## Response
+
+**`200 OK`** — Returns an array of `UserProfile` objects, each augmented with an `afinidad` field.
+
+```json
+[
+  {
+    "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+    "first_name": "Valentina",
+    "last_name": "Ríos",
+    "username": "valerios",
+    "birth_date": "1998-04-12T00:00:00.000Z",
+    "profile_picture": {
+      "url": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/64f1a2b3.jpg",
+      "public_id": "profiles/64f1a2b3"
+    },
+    "photos": [],
+    "bio": "Amo el café de especialidad y los domingos de mercado.",
+    "ciudad": "Medellín",
+    "is_verified": true,
+    "interests": ["café", "senderismo", "fotografía"],
+    "looking_for": "relationship",
+    "afinidad": {
+      "score": 87,
+      "amigosFB": false,
+      "interesesComun": 2,
+      "ciudadComun": true,
+      "edadSimilar": true,
+      "resumen": "2 intereses en común · misma ciudad"
+    }
+  }
+]
+```
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `401 Unauthorized` | Missing or invalid JWT |
+| `403 Forbidden` | Account suspended or incomplete profile |
+| `500 Internal Server Error` | Database or geospatial query failure |
+
+---
+
+## Example
+
+```bash
+curl -X GET https://api.debuta.app/api/users/discover \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## Notes
+
+<Note>
+  All filter criteria come from the user's stored settings document. To change what
+  profiles appear in the feed — distance, age range, gender preference, etc. — use
+  `PUT /api/settings`. There are no query parameters on this endpoint itself.
+</Note>
+
+<Tip>
+  The `afinidad.score` field is the primary sort key returned by the server. Display
+  profiles with higher scores earlier in the swipe stack to surface the most compatible
+  matches first.
+</Tip>

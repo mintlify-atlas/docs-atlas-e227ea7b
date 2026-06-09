@@ -1,0 +1,228 @@
+---
+title: "Theming and Dark Mode in the Debuta App"
+sidebarTitle: "Theming"
+description: "How Debuta's ThemeContext provides light and dark color tokens to components, and how to use the useTheme() hook to build theme-aware screens."
+---
+
+Debuta ships with a full light and dark color system backed by a React context. Every color used across the app is derived from a single `colors` object returned by `useTheme()` — no raw hex values are scattered through components. The active palette switches automatically in response to the device's system setting, or it can be locked to a specific mode by the user and persisted between sessions.
+
+## ThemeProvider and useTheme
+
+`ThemeProvider` lives at the very top of the provider tree in `app/_layout.tsx`, wrapping every other provider and screen:
+
+```tsx app/_layout.tsx
+<ThemeProvider>
+  <SocketProvider>
+    {/* ... rest of the app */}
+  </SocketProvider>
+</ThemeProvider>
+```
+
+Any component, hook, or screen can access the current theme by calling `useTheme()`:
+
+```ts
+import { useTheme } from '../theme/ThemeContext';
+
+const { colors, isDark, themeMode, setThemeMode, toggleTheme } = useTheme();
+```
+
+### ThemeContextValue
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `colors` | `ColorTokens` | The active color palette (light or dark) |
+| `isDark` | `boolean` | `true` when the dark palette is active |
+| `themeMode` | `ThemeMode` | The current mode setting: `'light'`, `'dark'`, or `'system'` |
+| `setThemeMode` | `(mode: ThemeMode) => void` | Persist a new mode to AsyncStorage and apply it immediately |
+| `toggleTheme` | `() => void` | Flip between light and dark (ignores `'system'` — sets an explicit mode) |
+
+---
+
+## ThemeMode
+
+```ts theme/ThemeContext.tsx
+export type ThemeMode = 'light' | 'dark' | 'system';
+```
+
+<Tabs>
+  <Tab title="system (default)">
+    The app follows the device's system color scheme via React Native's `useColorScheme()`. When the device switches between light and dark mode, the app updates instantly without any user action.
+  </Tab>
+  <Tab title="light">
+    Forces the light palette regardless of system setting. Persisted to AsyncStorage under `debuta_theme_mode`.
+  </Tab>
+  <Tab title="dark">
+    Forces the dark palette regardless of system setting. Persisted to AsyncStorage under `debuta_theme_mode`.
+  </Tab>
+</Tabs>
+
+---
+
+## Persistence
+
+The chosen `ThemeMode` is saved to and loaded from `AsyncStorage` under the key `debuta_theme_mode`.
+
+```ts theme/ThemeContext.tsx
+const THEME_STORAGE_KEY = 'debuta_theme_mode';
+
+// Loading on mount
+const savedMode = await AsyncStorage.getItem(THEME_STORAGE_KEY);
+if (savedMode) setThemeModeState(savedMode as ThemeMode);
+
+// Saving on change
+await AsyncStorage.setItem(THEME_STORAGE_KEY, mode);
+```
+
+On first launch (no saved value) the provider defaults to `'system'`, so users automatically see the palette that matches their device without any configuration.
+
+---
+
+## Color Token Reference
+
+Both palettes expose exactly the same token names. Swap `DARK_COLORS` for `LIGHT_COLORS` in your head to see how each token differs.
+
+### DARK_COLORS
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `bg` | `['#050505', '#160B2A', '#050505']` | Linear gradient array for full-screen backgrounds |
+| `card` | `#121212` | Surface color for cards and modals |
+| `inputBg` | `rgba(20, 20, 35, 0.6)` | Text input and form field backgrounds |
+| `glassBorder` | `rgba(255, 255, 255, 0.1)` | Borders on glassmorphism elements |
+| `text` | `#FFFFFF` | Primary text |
+| `textDim` | `#D1D5DB` | Secondary / subdued text |
+| `textLight` | `#9CA3AF` | Placeholder, caption, and hint text |
+| `primary` | `#8B5CF6` | Brand accent (buttons, active states) |
+| `secondary` | `#D946EF` | Secondary actions and highlights |
+| `tertiary` | `#6366F1` | Tertiary accents and decorative elements |
+| `error` | `#EF4444` | Destructive actions, error states |
+| `success` | `#10B981` | Confirmations, success states |
+| `warning` | `#FFD700` | Warnings and cautionary states |
+
+### LIGHT_COLORS
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `bg` | `['#FFFFFF', '#F8F9FA', '#FFFFFF']` | Linear gradient array for full-screen backgrounds |
+| `card` | `#FFFFFF` | Surface color for cards and modals |
+| `inputBg` | `rgba(0, 0, 0, 0.05)` | Text input and form field backgrounds |
+| `glassBorder` | `#EEEEEE` | Borders on cards and dividers |
+| `text` | `#000000` | Primary text |
+| `textDim` | `#424242` | Secondary / subdued text |
+| `textLight` | `rgba(66,66,66,0.5)` | Placeholder, caption, and hint text |
+| `primary` | `#FD297B` | Brand accent (buttons, active states) |
+| `secondary` | `#FF655B` | Secondary actions and highlights |
+| `tertiary` | `#FF5864` | Tertiary accents and decorative elements |
+| `error` | `#EF4444` | Destructive actions, error states |
+| `success` | `#10B981` | Confirmations, success states |
+| `warning` | `#FFD700` | Warnings and cautionary states |
+
+<Note>
+  `bg` is a tuple of at least two strings so it can be passed directly to `expo-linear-gradient`'s `colors` prop without any mapping. The dark palette uses a deep purple midnight gradient; the light palette uses an off-white soft gradient.
+</Note>
+
+---
+
+## System Color Scheme Reactivity
+
+The provider calls `useColorScheme()` from React Native and sets up an effect that re-evaluates `isDark` whenever either `themeMode` or the system scheme changes:
+
+```ts theme/ThemeContext.tsx
+const systemScheme = useColorScheme();
+
+useEffect(() => {
+  if (themeMode === 'system') {
+    setIsDark(systemScheme === 'dark');
+  } else {
+    setIsDark(themeMode === 'dark');
+  }
+}, [themeMode, systemScheme]);
+```
+
+This means that if the user has `themeMode` set to `'system'` and they change their device setting while the app is running, the colors update immediately with no restart required.
+
+---
+
+## Using useTheme in a Component
+
+Here is a complete example of a theme-aware screen card built using the color tokens:
+
+```tsx
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useTheme } from '../theme/ThemeContext';
+
+export default function ProfileCard({ name, bio }: { name: string; bio: string }) {
+  const { colors, isDark, toggleTheme } = useTheme();
+
+  return (
+    <LinearGradient
+      colors={colors.bg}
+      style={styles.container}
+    >
+      <View
+        style={[
+          styles.card,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.glassBorder,
+          },
+        ]}
+      >
+        <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
+        <Text style={[styles.bio, { color: colors.textDim }]}>{bio}</Text>
+
+        <TouchableOpacity
+          style={[styles.button, { backgroundColor: colors.primary }]}
+          onPress={toggleTheme}
+        >
+          <Text style={{ color: '#FFFFFF' }}>
+            {isDark ? 'Switch to Light' : 'Switch to Dark'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </LinearGradient>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, justifyContent: 'center', padding: 24 },
+  card: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+    gap: 12,
+  },
+  name: { fontSize: 22, fontWeight: '700' },
+  bio:  { fontSize: 15 },
+  button: {
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+});
+```
+
+### Changing the Theme Programmatically
+
+To let users choose their preferred mode from a settings screen:
+
+```tsx
+const { themeMode, setThemeMode } = useTheme();
+
+// Lock to dark mode
+await setThemeMode('dark');
+
+// Lock to light mode
+await setThemeMode('light');
+
+// Follow system setting
+await setThemeMode('system');
+```
+
+`setThemeMode` is async because it persists the choice to AsyncStorage before updating the React state. You can `await` it if you need to confirm the write, or call it fire-and-forget — the UI updates synchronously on the next render regardless.
+
+<Tip>
+  Because `setThemeMode` writes to AsyncStorage, it is safe to call from a settings toggle, an onboarding flow, or any background task. The next cold start of the app will pick up the saved preference before the first render.
+</Tip>

@@ -1,0 +1,174 @@
+---
+title: "User Reporting and Safety API"
+sidebarTitle: "Reports"
+description: "POST /api/report/:userId to report another user for inappropriate behavior, and GET /api/report/mis-reportes to view your submitted reports."
+---
+
+Debuta's reporting system lets users flag inappropriate behavior directly from any profile. When a report is submitted, the match between the two users is automatically dissolved and the report enters an admin review queue. Both endpoints require authentication and operate only on the authenticated user's own reports — users cannot view or modify each other's reports.
+
+---
+
+## The Report Object
+
+<ResponseField name="reporte" type="object">
+  A single report document.
+
+  <Expandable title="Report fields">
+    <ResponseField name="_id" type="string">
+      MongoDB ObjectId — unique identifier for the report.
+    </ResponseField>
+    <ResponseField name="reportadoPor" type="string">
+      ObjectId of the user who submitted the report (always the authenticated user).
+    </ResponseField>
+    <ResponseField name="reportado" type="object">
+      Populated snapshot of the reported user: `first_name`, `username`, `profile_picture`.
+    </ResponseField>
+    <ResponseField name="motivo" type="string">
+      Report category. One of: `spam`, `contenido_inapropiado`, `comportamiento_ofensivo`, `perfil_falso`, `acoso`, `otro`.
+    </ResponseField>
+    <ResponseField name="descripcion" type="string">
+      Optional free-text description, maximum 500 characters.
+    </ResponseField>
+    <ResponseField name="estado" type="string">
+      Review status. One of: `pendiente`, `revisado`, `resuelto`. Defaults to `pendiente`.
+    </ResponseField>
+    <ResponseField name="createdAt" type="string">
+      ISO 8601 timestamp of when the report was submitted.
+    </ResponseField>
+    <ResponseField name="updatedAt" type="string">
+      ISO 8601 timestamp of the last status change.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Endpoints
+
+<CardGroup cols={2}>
+  <Card title="POST /api/report/:userId" icon="flag">
+    Report a user for inappropriate behavior.
+  </Card>
+  <Card title="GET /api/report/mis-reportes" icon="list">
+    View all reports submitted by you.
+  </Card>
+</CardGroup>
+
+---
+
+### POST /api/report/:userId
+
+Reports another user. The server validates that the `motivo` is one of the allowed categories, prevents self-reporting, and uses an upsert so that submitting a report against the same user a second time **updates** the existing report rather than creating a duplicate. Any existing match between the reporter and the reported user is automatically deleted as a safety measure.
+
+**Authentication:** Bearer JWT required.
+
+#### Path parameters
+
+<ParamField path="userId" type="string" required>
+  MongoDB ObjectId of the user you are reporting.
+</ParamField>
+
+#### Request body
+
+<ParamField body="motivo" type="string" required>
+  Reason for the report. Must be exactly one of the following values:
+
+  | Value | Description |
+  |-------|-------------|
+  | `spam` | Spam or promotional content |
+  | `contenido_inapropiado` | Inappropriate content |
+  | `comportamiento_ofensivo` | Offensive or harassing behavior |
+  | `perfil_falso` | Fake or impersonation profile |
+  | `acoso` | Harassment or stalking |
+  | `otro` | Other reason (use `descripcion` to elaborate) |
+</ParamField>
+
+<ParamField body="descripcion" type="string">
+  Optional additional context. Maximum 500 characters.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "message": "Usuario reportado correctamente. Gracias por tu reporte."
+}
+```
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `motivo` is not one of the valid enum values. |
+| `400`  | Attempting to report yourself. |
+| `401`  | Missing or invalid JWT. |
+| `500`  | Internal server error. |
+
+#### curl examples
+
+```bash
+# Report for harassment
+curl -X POST https://api.debuta.app/api/report/665f000000000000000000bb \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "motivo": "acoso",
+    "descripcion": "This user sent unsolicited messages repeatedly after I asked them to stop."
+  }'
+
+# Report a fake profile (no description needed)
+curl -X POST https://api.debuta.app/api/report/665f000000000000000000cc \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"motivo": "perfil_falso"}'
+```
+
+<Warning>
+  Submitting a report immediately removes any mutual match or pending like between you and the reported user. This action cannot be reversed from the client.
+</Warning>
+
+---
+
+### GET /api/report/mis-reportes
+
+Returns all reports the authenticated user has submitted, sorted newest first. Each report includes a populated snapshot of the reported user.
+
+**Authentication:** Bearer JWT required.
+
+#### Response `200`
+
+```json
+{
+  "reportes": [
+    {
+      "_id": "665f2c3d4e5f6a7b8c9d0e1f",
+      "reportadoPor": "665f000000000000000000aa",
+      "reportado": {
+        "_id": "665f000000000000000000bb",
+        "first_name": "Diego",
+        "username": "diego.x",
+        "profile_picture": {
+          "url": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/diego.jpg",
+          "public_id": "profiles/diego"
+        }
+      },
+      "motivo": "acoso",
+      "descripcion": "Sent repeated unwanted messages.",
+      "estado": "pendiente",
+      "createdAt": "2024-06-04T09:00:00.000Z",
+      "updatedAt": "2024-06-04T09:00:00.000Z"
+    }
+  ]
+}
+```
+
+#### curl example
+
+```bash
+curl -X GET https://api.debuta.app/api/report/mis-reportes \
+  -H "Authorization: Bearer <token>"
+```
+
+<Note>
+  Admins review all submitted reports in the admin panel via `GET /api/admin/reports`. Status transitions (`pendiente` → `revisado` → `resuelto`) are managed exclusively by the admin interface and are reflected in the `estado` field of each report object returned here.
+</Note>

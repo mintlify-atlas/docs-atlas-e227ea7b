@@ -1,0 +1,218 @@
+---
+title: "Moderation and Reports in the Debuta Admin Panel"
+sidebarTitle: "Reports"
+description: "How to review user-submitted reports, update report status, ban reported users, and access platform growth analytics in the Debuta admin panel."
+---
+
+The Reports section is the primary moderation tool for the Debuta platform. Users can flag other users directly from the mobile app, and every report lands in this view for admin review. The same section of the backend also exposes the growth analytics and support ticket endpoints used by the Dashboard and Statistics panels.
+
+## User Reports
+
+Reports are submitted by users from inside the mobile app and stored in the `Reporte` collection. Each report captures the reporter, the reported user, a categorized reason, and an optional free-text description.
+
+### Supported Report Reasons
+
+| Value | Label |
+|---|---|
+| `spam` | Spam |
+| `contenido_inapropiado` | Contenido inapropiado |
+| `comportamiento_ofensivo` | Comportamiento ofensivo |
+| `perfil_falso` | Perfil falso |
+| `acoso` | Acoso |
+| `otro` | Otro |
+
+### Report Statuses
+
+| Status | Meaning |
+|---|---|
+| `pendiente` | Newly submitted, not yet reviewed |
+| `revisado` | Acknowledged by an admin |
+| `resuelto` | Action has been taken |
+
+The sidebar badge next to **Reportes** shows the current count of `pendiente` reports, updated automatically whenever the Dashboard stats refresh.
+
+## Fetching Reports
+
+```http
+GET /api/admin/reports?page=1&limit=20&estado=pendiente
+Authorization: Bearer <admin-token>
+```
+
+The `estado` filter is optional. Omit it to retrieve all reports regardless of status. The response populates both the `reportadoPor` and `reportado` fields with name, username, email, and profile picture.
+
+**Response:**
+
+```json
+{
+  "reportes": [
+    {
+      "_id": "...",
+      "reportadoPor": {
+        "first_name": "Carlos",
+        "username": "carlosm",
+        "correo": "carlos@example.com",
+        "profile_picture": { "url": "https://..." }
+      },
+      "reportado": {
+        "first_name": "Javier",
+        "username": "javierg",
+        "correo": "javier@example.com",
+        "activo": true
+      },
+      "motivo": "acoso",
+      "descripcion": "Mensajes repetitivos después de bloqueo.",
+      "estado": "pendiente",
+      "createdAt": "2024-11-03T14:22:00.000Z"
+    }
+  ],
+  "total": 8,
+  "page": 1,
+  "pages": 1
+}
+```
+
+## Report Actions
+
+### Update Report Status
+
+Transition a report to `revisado` or `resuelto` without banning the reported user.
+
+```http
+PUT /api/admin/reports/:id/status
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "estado": "revisado"
+}
+```
+
+Valid values are `"pendiente"`, `"revisado"`, and `"resuelto"`. After a successful update the Dashboard stats are refreshed to reflect the new pending count.
+
+### Ban Reported User
+
+If the report warrants an account ban, use the dedicated ban endpoint. This performs two operations atomically: it sets `activo: false` on the reported user's account and advances the report status to `resuelto`.
+
+```http
+POST /api/admin/reports/:id/ban
+Authorization: Bearer <admin-token>
+```
+
+**Response:**
+
+```json
+{
+  "message": "Usuario baneado y reporte resuelto correctamente"
+}
+```
+
+Once a user is banned, the **Banear** button in the report row is replaced with the text "Baneado" to prevent duplicate actions.
+
+<Note>
+  Banning from a report uses the same `activo: false` mechanism as toggling a user in the Users section. The ban can be reversed at any time from the Users table using the **Activar** action.
+</Note>
+
+## Dashboard Stats
+
+The Dashboard KPI cards call this endpoint on load and every 30 seconds.
+
+```http
+GET /api/admin/stats
+Authorization: Bearer <admin-token>
+```
+
+**Response fields:**
+
+| Field | Description |
+|---|---|
+| `totalUsuarios` | Total registered accounts |
+| `usuariosHoy` | Accounts created today |
+| `usuariosSemana` | Accounts created in the last 7 days |
+| `usuariosMes` | Accounts created in the last 30 days |
+| `totalMatches` | Confirmed matches (`esMatch: true`) |
+| `matchesHoy` | Matches formed today |
+| `totalMensajes` | Total messages sent across all conversations |
+| `reportesPendientes` | Reports with status `pendiente` |
+| `totalAsociados` | Active accounts with role `asociado` |
+| `usuariosActivos` | Accounts with `activo: true` |
+| `usuariosInactivos` | Accounts with `activo: false` |
+| `usuariosOnline` | Users currently connected via Socket.IO |
+
+## Growth Analytics
+
+The Statistics section and the Dashboard growth chart both use this endpoint.
+
+```http
+GET /api/admin/growth?days=30
+Authorization: Bearer <admin-token>
+```
+
+The `days` parameter controls the time window for the daily registration series (supported values used by the UI: `7`, `30`, `90`). The other aggregations always return full platform data regardless of the `days` value.
+
+**Response fields:**
+
+| Field | Description |
+|---|---|
+| `registrosPorDia` | Daily registration counts for the specified window |
+| `porGenero` | User distribution by `gender` field |
+| `porPais` | Top 10 countries by user count |
+| `porCiudad` | Top 10 cities by user count |
+| `reportesPorMotivo` | Report count grouped by `motivo` — used for the Statistics pie chart |
+| `porProveedor` | Distribution by `auth_provider` (e.g., `google`, `local`) |
+
+## Support Tickets
+
+Support tickets submitted from the mobile app are managed from the Soporte section. The same admin token is used for all three support endpoints.
+
+### List Tickets
+
+```http
+GET /api/admin/soporte?page=1&limit=20&estado=abierto
+Authorization: Bearer <admin-token>
+```
+
+The `estado` filter accepts: `abierto`, `en_revision`, `resuelto`, `cerrado`.
+
+### Update Ticket
+
+Update the ticket status and optionally store an admin reply that is visible to the user.
+
+```http
+PUT /api/admin/soporte/:id
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "estado": "resuelto",
+  "respuesta_admin": "Your issue has been resolved. Please update the app."
+}
+```
+
+### Ticket Stats
+
+Returns a summary count used to populate the support KPI cards and the sidebar badge.
+
+```http
+GET /api/admin/soporte/stats
+Authorization: Bearer <admin-token>
+```
+
+**Response:**
+
+```json
+{
+  "abiertos": 5,
+  "enRevision": 2,
+  "resueltos": 18,
+  "noLeidos": 3
+}
+```
+
+## Associates List
+
+```http
+GET /api/admin/asociados?page=1&limit=20
+Authorization: Bearer <admin-token>
+```
+
+Returns all users with `rol: "asociado"`, enriched with their real-time online status and appointment statistics (`citasPendientes`, `citasAceptadas`) derived from `Match` documents tagged with `recomendacion.asociadoId`.

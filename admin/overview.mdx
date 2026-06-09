@@ -1,0 +1,59 @@
+---
+title: "Debuta Admin Panel: Features and Access"
+sidebarTitle: "Overview"
+description: "The Debuta admin panel is a web-based dashboard for managing users, moderation, analytics, and support tickets. Served at /admin by the backend."
+---
+
+The Debuta admin panel is a vanilla JavaScript single-page application served statically by the backend at `http://your-server/admin`. It provides a complete management interface for the platform — from user moderation and reports to analytics and support ticket resolution — without requiring a separate frontend deployment.
+
+## Accessing the Admin Panel
+
+Navigate to `/admin` in your browser. You will be presented with a login screen. Enter the email and password of an account with the `admin` role. The login form submits to `POST /api/admin/login`, which is the only admin route that does not require an existing token.
+
+```
+POST /api/admin/login
+Content-Type: application/json
+
+{
+  "correo": "admin@debuta.app",
+  "password": "your-password"
+}
+```
+
+On success the server returns a JWT valid for **8 hours**. The token is stored in `localStorage` under the key `debuta_admin_token` and attached as a `Bearer` token to every subsequent API call.
+
+<Note>
+  Admin credentials are seeded at startup using the `ADMIN_EMAIL` and `ADMIN_USERNAME` environment variables defined in your backend `.env` file. Set these before the first run and keep them out of version control.
+</Note>
+
+## Security Model
+
+Every admin API route (except `/login`) is protected by two Express middlewares applied in sequence:
+
+1. **`verificarToken`** — validates the `Authorization: Bearer <token>` header and attaches the decoded payload to `req.usuario`.
+2. **`soloAdmin`** — rejects requests where `req.usuario.rol !== 'admin'` with a `403 Forbidden` response.
+
+Any request made with a regular user token — even a valid one — will be denied at the middleware layer before reaching the controller.
+
+## Panel Sections
+
+<CardGroup cols={2}>
+  <Card title="Dashboard" icon="chart-bar">
+    Real-time KPI cards showing online users, total users, new registrations today and this week, total matches, messages sent, pending reports, active associates, and open support tickets. Includes a registration growth line chart (configurable to 7, 30, or 90 days) and a gender distribution doughnut chart. Stats refresh automatically every 30 seconds.
+  </Card>
+  <Card title="Users" icon="users">
+    Paginated, filterable table of all registered accounts. Search by name, email, or username; filter by role (`user`, `admin`, `asociado`) or account status. Open a detail modal to view profile data, verification status, match and message counts, and perform role changes, account activation/deactivation, or permanent deletion.
+  </Card>
+  <Card title="Reports" icon="flag">
+    Lists every user-submitted report with the reporter, reported user, reason, description, and current status (`pendiente`, `revisado`, `resuelto`). Admins can mark a report as reviewed or resolved, or ban the reported user directly from the report row. A badge in the sidebar shows the count of pending reports.
+  </Card>
+  <Card title="Associates" icon="building">
+    Shows all accounts with the `asociado` role, including their online status, pending appointment count, and accepted appointment count. Admins can toggle an associate's active status or revoke their role, which downgrades them back to `user`.
+  </Card>
+  <Card title="Statistics" icon="chart-pie">
+    Dedicated analytics section powered by Chart.js. Displays four charts: reports broken down by reason (pie), authentication providers (doughnut), top cities by user count (bar), and top countries (horizontal bar). All data is sourced from `GET /api/admin/growth?days=30`.
+  </Card>
+  <Card title="Support" icon="headphones">
+    Manages support tickets submitted by users from the mobile app. Shows KPI cards for open, in-review, resolved, and unread ticket counts. Admins can view full ticket details, write an admin response, and transition tickets through the states: `abierto` → `en_revision` → `resuelto` → `cerrado`. The sidebar badge reflects unread ticket count, refreshing every 60 seconds.
+  </Card>
+</CardGroup>

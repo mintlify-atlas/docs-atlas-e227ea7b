@@ -1,72 +1,120 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "Debuta",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
-  },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "primary": "#FD297B",
+    "light": "#FF655B",
+    "dark": "#8B5CF6"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/desarrolladorandres2026-gif/Native-tailwind"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/desarrolladorandres2026-gif/Native-tailwind"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Mobile App",
+            "pages": [
+              "mobile/setup",
+              "mobile/screens",
+              "mobile/real-time",
+              "mobile/theming"
+            ]
+          },
+          {
+            "group": "Backend",
+            "pages": [
+              "backend/setup",
+              "backend/authentication",
+              "backend/configuration"
+            ]
+          },
+          {
+            "group": "Admin Panel",
+            "pages": [
+              "admin/overview",
+              "admin/users",
+              "admin/reports"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/backend",
+              "deployment/mobile"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": [
+              "api/auth",
+              "api/social-auth",
+              "api/password-reset"
+            ]
+          },
+          {
+            "group": "Users & Profiles",
+            "pages": [
+              "api/users",
+              "api/settings"
+            ]
+          },
+          {
+            "group": "Discovery & Matching",
+            "pages": [
+              "api/discover",
+              "api/matches",
+              "api/likes"
+            ]
+          },
+          {
+            "group": "Chat & Calls",
+            "pages": [
+              "api/chat",
+              "api/socket-events"
+            ]
+          },
+          {
+            "group": "Content & Safety",
+            "pages": [
+              "api/posts",
+              "api/reports",
+              "api/facial"
+            ]
+          },
+          {
+            "group": "Partners & Support",
+            "pages": [
+              "api/partners",
+              "api/support"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

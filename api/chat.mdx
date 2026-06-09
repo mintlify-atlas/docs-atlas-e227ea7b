@@ -1,0 +1,234 @@
+---
+title: "Chat REST API — Message History and Image Upload"
+sidebarTitle: "Chat"
+description: "REST endpoints for fetching paginated message history between matched users and uploading chat images to Cloudinary. Real-time messaging uses Socket.io, not REST."
+---
+
+The Chat REST API handles two concerns: retrieving persisted message history for a conversation and uploading images before sending them as chat messages. All real-time message delivery — including typing indicators and read receipts — runs over Socket.io. The HTTP `POST /api/chat/:userId` endpoint exists as a fallback only; prefer the `mensaje:enviar` socket event in normal operation.
+
+Both users must have a confirmed mutual match (`esMatch: true`) before any chat endpoint will respond with data. Attempts to read or write messages without a match return `403 Forbidden`.
+
+---
+
+## Endpoints
+
+<CardGroup cols={3}>
+  <Card title="POST /api/chat/upload" icon="image">
+    Upload a chat image to Cloudinary.
+  </Card>
+  <Card title="GET /api/chat/:userId" icon="message">
+    Fetch paginated message history.
+  </Card>
+  <Card title="POST /api/chat/:userId" icon="paper-plane">
+    Send a text message (REST fallback).
+  </Card>
+</CardGroup>
+
+All endpoints require `Authorization: Bearer <access_token>`.
+
+---
+
+## POST /api/chat/upload
+
+Uploads an image file to Cloudinary and returns the hosted URL. Use the returned `url` as the `content` value in a subsequent `mensaje:enviar` socket event or `POST /api/chat/:userId` call.
+
+The request must be `multipart/form-data` with a single field named `file`.
+
+### Request
+
+<ParamField body="file" type="file" required>
+  Image file to upload. Must be a valid image format accepted by Cloudinary (JPEG, PNG, WebP, etc.).
+  Sent as `multipart/form-data`.
+</ParamField>
+
+### Response `200 OK`
+
+```json
+{
+  "url": "https://res.cloudinary.com/debuta/image/upload/v1/debuta/chats/64f0.../photo.jpg"
+}
+```
+
+<ResponseField name="url" type="string">
+  Full Cloudinary URL of the uploaded image. Use this value as the message content when sending an image message.
+</ResponseField>
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `400` | No file received in the request |
+| `401` | Missing or invalid Bearer token |
+| `500` | Cloudinary upload failure |
+
+### Example
+
+```bash
+curl -X POST https://api.debuta.app/api/chat/upload \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -F "file=@/path/to/photo.jpg"
+```
+
+---
+
+## GET /api/chat/:userId
+
+Returns the paginated message history between the authenticated user and `userId`. Messages are sorted **oldest first**. Calling this endpoint also marks all unread messages **from** `userId` as read (`is_read: true`).
+
+Both users must be in a confirmed mutual match, otherwise `403` is returned.
+
+### Path parameters
+
+<ParamField path="userId" type="string" required>
+  MongoDB `_id` of the other user in the conversation.
+</ParamField>
+
+### Query parameters
+
+<ParamField query="pagina" type="number" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+<ParamField query="limite" type="number" default="50">
+  Maximum number of messages to return per page.
+</ParamField>
+
+### Response `200 OK`
+
+```json
+{
+  "matchId": "64f1a2b3c4d5e6f7a8b9c0d2",
+  "mensajes": [
+    {
+      "id": "64f9aa11b2c3d4e5f6a7b8c0",
+      "matchId": "64f1a2b3c4d5e6f7a8b9c0d2",
+      "sender_id": "64f0000000000000000000aa",
+      "receiver_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+      "content": "¡Hola! ¿Cómo estás?",
+      "is_read": true,
+      "created_at": "2024-07-15T21:05:33.000Z"
+    },
+    {
+      "id": "64f9aa22b2c3d4e5f6a7b8c1",
+      "matchId": "64f1a2b3c4d5e6f7a8b9c0d2",
+      "sender_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+      "receiver_id": "64f0000000000000000000aa",
+      "content": "¡Muy bien, gracias! ¿Y tú?",
+      "is_read": false,
+      "created_at": "2024-07-15T21:06:10.000Z"
+    }
+  ]
+}
+```
+
+<ResponseField name="matchId" type="string">
+  The shared Match document ID for this conversation.
+</ResponseField>
+
+<ResponseField name="mensajes" type="Message[]">
+  Array of message objects sorted oldest-first.
+
+  <ResponseField name="id" type="string">
+    Message ID (mapped from MongoDB `_id` via the model's `toJSON` transform).
+  </ResponseField>
+  <ResponseField name="matchId" type="string">
+    Match document ID this message belongs to.
+  </ResponseField>
+  <ResponseField name="sender_id" type="string">
+    User ID of the message author.
+  </ResponseField>
+  <ResponseField name="receiver_id" type="string">
+    User ID of the message recipient.
+  </ResponseField>
+  <ResponseField name="content" type="string">
+    Message text, or a Cloudinary URL for image messages (max 1,000 characters).
+  </ResponseField>
+  <ResponseField name="is_read" type="boolean">
+    `true` if the recipient has read this message.
+  </ResponseField>
+  <ResponseField name="created_at" type="string">
+    ISO 8601 creation timestamp (aliased from Mongoose `createdAt` by the model transform).
+  </ResponseField>
+</ResponseField>
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `403` | No mutual match between the two users |
+| `401` | Missing or invalid Bearer token |
+
+### Example
+
+```bash
+# Fetch the first 50 messages
+curl -X GET "https://api.debuta.app/api/chat/64f1a2b3c4d5e6f7a8b9c0d1" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# Fetch page 2 with a custom page size
+curl -X GET "https://api.debuta.app/api/chat/64f1a2b3c4d5e6f7a8b9c0d1?pagina=2&limite=25" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## POST /api/chat/:userId
+
+HTTP fallback for sending a text message. This endpoint saves the message to the database but does **not** emit a Socket.io event — the recipient will only see it when they next call `GET /api/chat/:userId`. For real-time delivery, use the `mensaje:enviar` socket event instead.
+
+Both users must have a confirmed mutual match.
+
+### Path parameters
+
+<ParamField path="userId" type="string" required>
+  MongoDB `_id` of the message recipient.
+</ParamField>
+
+### Request body
+
+<ParamField body="content" type="string" required>
+  Text content of the message. Cannot be empty or whitespace-only. Maximum 1,000 characters.
+</ParamField>
+
+### Response `201 Created`
+
+```json
+{
+  "mensaje": {
+    "id": "64f9bb33c3d4e5f6a7b8c9d0",
+    "matchId": "64f1a2b3c4d5e6f7a8b9c0d2",
+    "sender_id": "64f0000000000000000000aa",
+    "receiver_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+    "content": "Aquí un mensaje de respaldo.",
+    "is_read": false,
+    "created_at": "2024-07-15T21:30:00.000Z"
+  }
+}
+```
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `400` | Empty or whitespace-only `content` |
+| `403` | No mutual match between the two users |
+| `401` | Missing or invalid Bearer token |
+
+### Example
+
+```bash
+curl -X POST https://api.debuta.app/api/chat/64f1a2b3c4d5e6f7a8b9c0d1 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{ "content": "Hola, ¿cómo estás?" }'
+```
+
+---
+
+<Note>
+  For real-time messaging, always prefer the Socket.io `mensaje:enviar` event over this
+  REST endpoint. The socket path persists the message **and** emits `mensaje:nuevo` to
+  both users instantly. This REST endpoint is a graceful fallback for clients that lose
+  their socket connection mid-conversation; the `useChat` hook in the mobile app
+  automatically switches to it when `socket.connected` is `false`.
+</Note>

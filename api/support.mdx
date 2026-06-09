@@ -1,0 +1,233 @@
+---
+title: "User Support Ticket API"
+sidebarTitle: "Support"
+description: "POST /api/soporte to create a support ticket and GET /api/soporte/mis-tickets to view your submitted tickets. Tickets are reviewed by admins in the admin panel."
+---
+
+The support ticket system gives Debuta users a direct channel to the platform team. Users can open a ticket at any time from inside the app, categorise it, and track its status over time. Both endpoints require a valid JWT — tickets are always scoped to the authenticated user. Admins manage the full ticket queue via separate admin endpoints.
+
+---
+
+## The Ticket Object
+
+<ResponseField name="ticket" type="object">
+  A single support ticket document.
+
+  <Expandable title="Ticket fields">
+    <ResponseField name="_id" type="string">
+      MongoDB ObjectId — unique identifier for the ticket.
+    </ResponseField>
+    <ResponseField name="usuario" type="string">
+      ObjectId of the user who created the ticket.
+    </ResponseField>
+    <ResponseField name="categoria" type="string">
+      Ticket category. One of: `problema_tecnico`, `cuenta`, `pagos`, `abuso`, `sugerencia`, `otro`.
+    </ResponseField>
+    <ResponseField name="asunto" type="string">
+      Short subject line. Maximum 200 characters.
+    </ResponseField>
+    <ResponseField name="descripcion" type="string">
+      Detailed description. Maximum 2,000 characters.
+    </ResponseField>
+    <ResponseField name="estado" type="string">
+      Current status. One of: `abierto`, `en_revision`, `resuelto`, `cerrado`. Defaults to `abierto` on creation.
+    </ResponseField>
+    <ResponseField name="respuesta_admin" type="string">
+      Admin's reply to the ticket. Empty string until an admin responds.
+    </ResponseField>
+    <ResponseField name="leido_admin" type="boolean">
+      Internal flag indicating whether an admin has viewed the ticket. Not meaningful to end-users.
+    </ResponseField>
+    <ResponseField name="createdAt" type="string">
+      ISO 8601 timestamp of when the ticket was created.
+    </ResponseField>
+    <ResponseField name="updatedAt" type="string">
+      ISO 8601 timestamp of the last update (e.g. when an admin changes the status or adds a reply).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Ticket categories
+
+| Value | Use when… |
+|-------|-----------|
+| `problema_tecnico` | The app is crashing, loading slowly, or a feature is broken |
+| `cuenta` | Account access, password, email change, or account deletion |
+| `pagos` | Subscription, billing, or refund issues |
+| `abuso` | Reporting platform abuse not covered by the user report flow |
+| `sugerencia` | Feature requests and feedback |
+| `otro` | Anything that doesn't fit the above |
+
+---
+
+## Endpoints
+
+<CardGroup cols={2}>
+  <Card title="POST /api/soporte" icon="ticket">
+    Open a new support ticket.
+  </Card>
+  <Card title="GET /api/soporte/mis-tickets" icon="list-check">
+    View all tickets you have submitted.
+  </Card>
+</CardGroup>
+
+---
+
+### POST /api/soporte
+
+Creates a new support ticket scoped to the authenticated user. All three fields are required — `asunto` is trimmed and capped at 200 characters, `descripcion` at 2,000 characters. `categoria` must exactly match one of the allowed enum values or the request is rejected with `400`.
+
+**Authentication:** Bearer JWT required.
+
+**Content-Type:** `application/json`
+
+#### Request body
+
+<ParamField body="categoria" type="string" required>
+  Category of the issue. Must be one of: `problema_tecnico`, `cuenta`, `pagos`, `abuso`, `sugerencia`, `otro`.
+</ParamField>
+
+<ParamField body="asunto" type="string" required>
+  Brief summary of the issue. Maximum 200 characters.
+</ParamField>
+
+<ParamField body="descripcion" type="string" required>
+  Full description of the problem or request. Maximum 2,000 characters.
+</ParamField>
+
+#### Response `201`
+
+```json
+{
+  "message": "Tu reporte fue enviado al equipo de soporte. Te responderemos pronto.",
+  "ticket": {
+    "_id": "665f6a7b8c9d0e1f2a3b4c5d",
+    "estado": "abierto",
+    "createdAt": "2024-06-04T11:45:00.000Z"
+  }
+}
+```
+
+<ResponseField name="message" type="string">
+  Confirmation message to display to the user.
+</ResponseField>
+<ResponseField name="ticket._id" type="string">
+  ObjectId of the newly created ticket.
+</ResponseField>
+<ResponseField name="ticket.estado" type="string">
+  Always `"abierto"` immediately after creation.
+</ResponseField>
+<ResponseField name="ticket.createdAt" type="string">
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `categoria` is not one of the valid enum values. |
+| `400`  | `asunto` is missing or blank. |
+| `400`  | `descripcion` is missing or blank. |
+| `401`  | Missing or invalid JWT. |
+| `500`  | Internal server error. |
+
+#### curl examples
+
+```bash
+# Technical problem ticket
+curl -X POST https://api.debuta.app/api/soporte \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "categoria": "problema_tecnico",
+    "asunto": "App crashes when opening the chat screen",
+    "descripcion": "Every time I tap the chat icon on a matched profile the app closes immediately. Started happening after the latest update on iOS 17.4. I have tried reinstalling but the problem persists."
+  }'
+
+# Feature suggestion
+curl -X POST https://api.debuta.app/api/soporte \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "categoria": "sugerencia",
+    "asunto": "Add voice messages to chat",
+    "descripcion": "It would be great to be able to send short voice notes in the chat, similar to WhatsApp. This would make conversations feel more personal."
+  }'
+```
+
+---
+
+### GET /api/soporte/mis-tickets
+
+Returns all support tickets submitted by the authenticated user, sorted newest first. Use this endpoint to power a "My tickets" screen in the app, allowing users to track the `estado` and read any `respuesta_admin` replies.
+
+**Authentication:** Bearer JWT required.
+
+#### Response `200`
+
+```json
+{
+  "tickets": [
+    {
+      "_id": "665f6a7b8c9d0e1f2a3b4c5d",
+      "usuario": "665f000000000000000000aa",
+      "categoria": "problema_tecnico",
+      "asunto": "App crashes when opening the chat screen",
+      "descripcion": "Every time I tap the chat icon on a matched profile the app closes immediately.",
+      "estado": "en_revision",
+      "respuesta_admin": "Thanks for the report — our engineering team is investigating. We'll update you within 24 hours.",
+      "leido_admin": true,
+      "createdAt": "2024-06-04T11:45:00.000Z",
+      "updatedAt": "2024-06-04T14:10:00.000Z"
+    },
+    {
+      "_id": "665f5a6b7c8d9e0f1a2b3c4e",
+      "usuario": "665f000000000000000000aa",
+      "categoria": "sugerencia",
+      "asunto": "Add voice messages to chat",
+      "descripcion": "It would be great to be able to send short voice notes in the chat.",
+      "estado": "abierto",
+      "respuesta_admin": "",
+      "leido_admin": false,
+      "createdAt": "2024-06-02T08:30:00.000Z",
+      "updatedAt": "2024-06-02T08:30:00.000Z"
+    }
+  ]
+}
+```
+
+#### curl example
+
+```bash
+curl -X GET https://api.debuta.app/api/soporte/mis-tickets \
+  -H "Authorization: Bearer <token>"
+```
+
+<Note>
+  Admin-side ticket management — listing all tickets, filtering by status, updating `estado`, and posting `respuesta_admin` — is handled by the `GET /api/admin/soporte` and `PUT /api/admin/soporte/:id` endpoints documented in the Admin Panel section. Those endpoints require a JWT with `rol: 'admin'`.
+</Note>
+
+---
+
+## Ticket lifecycle
+
+<Steps>
+  <Step title="User creates ticket">
+    `POST /api/soporte` — ticket is created with `estado: 'abierto'`.
+  </Step>
+  <Step title="Admin picks up the ticket">
+    An admin opens the ticket in the admin panel. `estado` moves to `en_revision` and `leido_admin` becomes `true`.
+  </Step>
+  <Step title="Admin replies">
+    Admin posts a `respuesta_admin` message. Visible immediately via `GET /api/soporte/mis-tickets`.
+  </Step>
+  <Step title="Ticket is closed">
+    Admin sets `estado` to `resuelto` or `cerrado` once the issue is addressed.
+  </Step>
+</Steps>
+
+<Tip>
+  Poll `GET /api/soporte/mis-tickets` periodically (or on app foreground) to surface admin replies to users without requiring push notifications.
+</Tip>

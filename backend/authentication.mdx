@@ -1,0 +1,204 @@
+---
+title: "Authentication and Authorization in Debuta"
+sidebarTitle: "Authentication"
+description: "How Debuta authenticates users with JWT tokens, enforces role-based access control, and protects API routes with the verificarToken, soloAdmin, and soloAsociado middlewares."
+---
+
+Debuta uses **JSON Web Tokens (JWT)** for stateless authentication. After a successful login, the server issues an `access_token` that the client includes in subsequent requests as a `Bearer` token. The same token is also used to authenticate Socket.io connections. Role-based access control is layered on top with two additional middleware guards — `soloAdmin` and `soloAsociado`.
+
+## User Roles
+
+Every user document in MongoDB has a `rol` field with one of three possible values:
+
+| Role | Value | Description |
+|---|---|---|
+| Regular user | `user` | Default role assigned on registration. Access to standard dating app features. |
+| Admin | `admin` | Full access to the admin panel and all `/api/admin` endpoints. |
+| Restaurant partner | `asociado` | Access to `/api/asociado` endpoints for managing a restaurant listing. |
+
+## JWT Flow
+
+<Steps>
+  <Step title="Submit credentials">
+    The client sends a `POST` request to `/api/login` with the user's email address and password:
+
+    ```bash
+    curl -X POST http://localhost:3000/api/login \
+      -H 'Content-Type: application/json' \
+      -d '{ "correo": "user@example.com", "password": "secret123" }'
+    ```
+  </Step>
+  <Step title="Receive the access token">
+    On success the server responds with an `access_token` and the serialised user object:
+
+    ```json
+    {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "usuario": {
+        "_id": "664f1a2b3c4d5e6f7a8b9c0d",
+        "first_name": "Ana",
+        "correo": "user@example.com",
+        "rol": "user"
+      }
+    }
+    ```
+
+    The token payload contains only `{ id }` — the MongoDB `_id` of the user. It is signed with `JWT_SECRET` and expires after the duration set in `JWT_EXPIRES_IN` (default `7d`).
+  </Step>
+  <Step title="Attach the token to requests">
+    Include the token in the `Authorization` header on every protected request:
+
+    ```bash
+    curl -H 'Authorization: Bearer <your_token>' \
+         http://localhost:3000/api/me
+    ```
+  </Step>
+</Steps>
+
+## Admin Login
+
+Administrators authenticate through a separate endpoint:
+
+```
+POST /api/admin/login
+```
+
+The response has the same `{ access_token, usuario }` shape as the regular login endpoint. The returned token carries an `admin` role in the user document that `soloAdmin` checks at runtime.
+
+## Social Auth (Google / Facebook)
+
+Google and Facebook OAuth flows are handled under `/api/auth`. Regardless of the provider, a successful social login returns the same token structure as password-based login:
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "usuario": { ... }
+}
+```
+
+<Note>
+  A user who registered via Google or Facebook cannot use `POST /api/login` with a password. The server detects the `auth_provider` field on the user document and returns a `401` with a descriptive message if a social account attempts password-based login.
+</Note>
+
+## Middleware Reference
+
+### `verificarToken`
+
+Applied to every protected route. It reads the `Authorization` header, verifies the JWT signature against `JWT_SECRET`, and loads the full user document from MongoDB into `req.usuario`.
+
+```js
+// src/middlewares/auth.middleware.js
+const verificarToken = async (req, res, next) => {
+  try {
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Token no proporcionado' });
+    }
+
+    const token   = header.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Loads fields needed by the discover affinity algorithm
+    const usuario = await Usuario.findById(decoded.id)
+      .select('+social_friend_ids interests ciudad birth_date settings rol activo latitude longitude');
+
+    if (!usuario || !usuario.activo) {
+      return res.status(401).json({ message: 'Usuario no encontrado o inactivo' });
+    }
+
+    req.usuario = usuario;
+    next();
+  } catch {
+    return res.status(401).json({ message: 'Token inválido o expirado' });
+  }
+};
+```
+
+**Error responses:**
+
+| Status | Condition |
+|---|---|
+| `401 Token no proporcionado` | `Authorization` header is missing or does not start with `Bearer `. |
+| `401 Usuario no encontrado o inactivo` | The `id` in the token payload does not match an active user in the database. |
+| `401 Token inválido o expirado` | JWT signature verification failed or the token has expired. |
+
+### `soloAdmin`
+
+Placed after `verificarToken` on any route that requires admin privileges. Checks `req.usuario.rol === 'admin'`:
+
+```js
+const soloAdmin = (req, res, next) => {
+  if (req.usuario?.rol !== 'admin') {
+    return res.status(403).json({ message: 'Acceso solo para administradores' });
+  }
+  next();
+};
+```
+
+### `soloAsociado`
+
+Placed after `verificarToken` on routes that only restaurant partners may access. Checks `req.usuario.rol === 'asociado'`:
+
+```js
+const soloAsociado = (req, res, next) => {
+  if (req.usuario?.rol !== 'asociado') {
+    return res.status(403).json({ message: 'Acceso solo para asociados/restaurantes' });
+  }
+  next();
+};
+```
+
+## Protecting a Route
+
+Middleware is composed in the route definition. The guards are always applied in the order `verificarToken` → role guard (if needed):
+
+```js
+const { verificarToken, soloAdmin, soloAsociado } = require('../middlewares/auth.middleware');
+
+// Any authenticated user
+router.get('/api/me', verificarToken, me);
+
+// Admins only
+router.get('/api/admin/users', verificarToken, soloAdmin, listUsers);
+
+// Restaurant partners only
+router.put('/api/asociado/menu', verificarToken, soloAsociado, updateMenu);
+```
+
+## Socket.io Authentication
+
+Socket.io connections are authenticated in the `io.use()` middleware hook using the same `JWT_SECRET`. The client must pass the token in the `auth` object of the Socket.io handshake:
+
+```js
+// Client-side (React Native / JavaScript)
+import { io } from 'socket.io-client';
+
+const socket = io('http://localhost:3000', {
+  auth: {
+    token: accessToken, // the access_token from login
+  },
+});
+```
+
+On the server, the middleware validates the token before allowing the connection:
+
+```js
+// src/socket.js
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error('Token requerido'));
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.usuarioId = decoded.id;
+    next();
+  } catch {
+    next(new Error('Token inválido'));
+  }
+});
+```
+
+Once authenticated, every socket is automatically joined to a personal room named `user:<userId>`. The server uses this room to deliver targeted events (new messages, incoming calls, etc.) directly to that user regardless of which socket instance they are connected on.
+
+<Warning>
+  If the JWT has expired or is invalid, the Socket.io handshake is rejected with an `Error: Token inválido` and the client will not connect. Refresh or re-issue the token before reconnecting.
+</Warning>

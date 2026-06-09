@@ -1,0 +1,307 @@
+---
+title: "Real-Time Features: Chat, Presence, and Calls"
+sidebarTitle: "Real-Time"
+description: "How Debuta uses Socket.io and WebRTC for instant messaging, online presence detection, video calls, and audio calls in the React Native mobile app."
+---
+
+Debuta's real-time layer is built on two technologies: **Socket.io** for messaging and presence, and **WebRTC** (via `react-native-webrtc`) for peer-to-peer audio and video calls. Both are orchestrated by React context providers that live at the root of the app and are available to every screen.
+
+## SocketContext — App-Wide Socket Connection
+
+`SocketProvider` wraps the entire navigator tree inside `app/_layout.tsx`. It creates and owns a single Socket.io connection for the lifetime of the app session. Any component can read the socket and its connection state with the `useSocket()` hook.
+
+```tsx context/SocketContext.tsx
+const { socket, connected, reconnect } = useSocket();
+```
+
+### URL Resolution
+
+The socket uses the same URL resolution strategy as the REST API client. If `EXPO_PUBLIC_API_URL` is set it connects to that address; otherwise it auto-detects the Metro dev server host from `Constants.expoConfig.hostUri`:
+
+```ts context/SocketContext.tsx
+function getSocketUrl(): string {
+  if (process.env.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
+  const host =
+    Constants.expoConfig?.hostUri?.split(':')[0] ||
+    (Constants.manifest as any)?.debuggerHost?.split(':')[0];
+  return host ? `http://${host}:3000` : 'http://localhost:3000';
+}
+```
+
+### Connection Lifecycle
+
+<Steps>
+  <Step title="Initial connection">
+    On mount, `SocketProvider` calls `initSocket()` which reads `access_token`, `user_name`, and `user_photo` from AsyncStorage and opens the socket with those values in the `auth` payload.
+
+    ```ts context/SocketContext.tsx
+    const newSocket = io(getSocketUrl(), {
+      auth: { token, name, photo },
+      transports: ['websocket'],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
+      timeout: 10000,
+    });
+    ```
+  </Step>
+
+  <Step title="Token polling">
+    At startup the token may not yet be in AsyncStorage (e.g., the user is mid-registration). A `setInterval` poller runs every **3 seconds** and retries `initSocket()` until a token is found and a connection is established. The interval is cleared once the socket connects.
+  </Step>
+
+  <Step title="App foreground reconnect">
+    An `AppState` listener calls `initSocket()` whenever the app returns to the foreground (`active`) and the socket is not already connected.
+  </Step>
+
+  <Step title="Manual reconnect after login">
+    After a successful login or logout you should call `reconnect()`. This tears down the old socket (clearing all listeners), then calls `initSocket()` with the freshly stored credentials.
+
+    ```ts
+    const { reconnect } = useSocket();
+
+    // Call immediately after authService stores the token
+    await reconnect();
+    ```
+  </Step>
+</Steps>
+
+### Server-Side Authentication
+
+The socket `auth` payload carries the JWT. The backend validates this token in a Socket.io middleware before accepting the connection. On successful validation the server joins the socket to a private room named `user:<id>`, which is used for targeted event delivery (incoming calls, notifications, etc.).
+
+---
+
+## Messaging — `useChat`
+
+The `useChat(matchedUserId: string)` hook manages the full lifecycle of a chat conversation: loading history, receiving real-time messages, sending messages, and handling date suggestions.
+
+### Loading Messages
+
+On mount the hook fetches conversation history over HTTP:
+
+```ts hooks/useChat.ts
+const data = await api.get<{ matchId: string; mensajes: Message[] }>(
+  `/chat/${matchedUserId}`
+);
+```
+
+### Sending a Message
+
+When the socket is connected, messages are sent over the `mensaje:enviar` event. If the socket is offline, the hook falls back to an HTTP `POST`:
+
+```ts hooks/useChat.ts
+const sendMessage = async (content: string) => {
+  if (socket?.connected) {
+    socket.emit('mensaje:enviar', { paraId: matchedUserId, content: content.trim() });
+  } else {
+    // HTTP fallback
+    const data = await api.post<{ mensaje: Message }>(
+      `/chat/${matchedUserId}`,
+      { content: content.trim() }
+    );
+    addMessages([data.mensaje]);
+  }
+};
+```
+
+### Receiving Messages
+
+Incoming messages arrive on the `mensaje:nuevo` event. A deduplication guard (`msgIds` ref of type `Set<string>`) ensures that a message is never rendered twice, even if the HTTP load and socket event overlap.
+
+```ts hooks/useChat.ts
+socket.on('mensaje:nuevo', (msg: Message) => {
+  const involucrado =
+    msg.sender_id === matchedUserId || msg.receiver_id === matchedUserId;
+  if (involucrado) addMessages([msg]);
+});
+```
+
+### Fallback Polling
+
+If the socket is not connected when the hook mounts, a 5-second interval polls the history endpoint. The interval is cleared as soon as the socket becomes `connected`.
+
+---
+
+## Presence
+
+Debuta tracks online/offline status using socket events broadcast by the server. No client-side code needs to emit these — the server handles them automatically when users connect and disconnect.
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `presencia:estado` | client → server | Request the online status of a specific user |
+| `presencia:respuesta` | server → client | Server's reply with the user's current status |
+| `usuario:online` | server → client | Broadcast when a user's socket connects |
+| `usuario:offline` | server → client | Broadcast when a user's socket disconnects |
+
+---
+
+## Video and Audio Calls
+
+Calls are managed by two cooperating layers: **`CallContext`** handles the call state machine and socket signaling; **`useWebRTC`** manages the underlying `RTCPeerConnection`, media streams, and ICE negotiation.
+
+### CallContext
+
+`CallProvider` wraps the app inside `app/_layout.tsx`. When an incoming call arrives it renders `IncomingCallScreen` as an overlay on top of whatever screen is currently active, ensuring the user is always notified regardless of where they are in the app.
+
+```tsx context/CallContext.tsx
+const {
+  incomingCall,   // CallInfo | null — set when a call:incoming event arrives
+  activeCall,     // CallInfo | null — set once a call is accepted or initiated
+  isOutgoing,     // boolean
+  localStream,    // MediaStream | null
+  remoteStream,   // MediaStream | null
+  initiateCall,   // (toId, name, photo, isVideo) => void
+  acceptCall,     // () => void
+  rejectCall,     // () => void
+  endCall,        // () => void
+  toggleMute,     // (muted: boolean) => void
+  toggleCamera,   // (off: boolean) => void
+} = useCall();
+```
+
+### Call Flow
+
+<Steps>
+  <Step title="Caller: initiateCall()">
+    1. Requests microphone (and camera if `isVideo`) permissions via `requestMediaPermissions`.
+    2. Creates an SDP offer using `useWebRTC.createOffer(toId, isVideo)`.
+    3. Emits `call:request` with the real SDP offer, caller name, and photo.
+    4. Navigates to `app/call.tsx` with `type: 'outgoing'`.
+    5. A 30-second timeout automatically ends the call if no answer arrives.
+
+    ```ts
+    socket.emit('call:request', {
+      paraId:      toId,
+      isVideo,
+      signalData:  offer,  // real RTCSessionDescription
+      callerName:  name,
+      callerPhoto: photo,
+    });
+    ```
+  </Step>
+
+  <Step title="Recipient: call:incoming event">
+    The server forwards the offer to the recipient's `user:<id>` room. `CallContext` receives `call:incoming`, validates the SDP, stores the `CallInfo`, triggers haptic feedback, and plays a ringtone. `IncomingCallScreen` is rendered as an overlay.
+  </Step>
+
+  <Step title="Recipient: acceptCall()">
+    1. Requests media permissions.
+    2. Calls `useWebRTC.createAnswer(fromId, signalData, isVideo)` to set the remote description and generate an SDP answer.
+    3. Emits `call:accept` with the real SDP answer.
+    4. Navigates to `app/call.tsx` with `type: 'active'`.
+
+    ```ts
+    socket.emit('call:accept', {
+      paraId:     call.fromId,
+      signalData: answer,  // real RTCSessionDescription
+    });
+    ```
+  </Step>
+
+  <Step title="Caller: call:accepted event">
+    On receiving `call:accepted`, the caller calls `useWebRTC.setRemoteAnswer(signalData)` to complete the SDP handshake. Navigation updates to show the active call UI.
+  </Step>
+
+  <Step title="ICE candidate exchange">
+    Both sides emit local ICE candidates via `call:signal` as they are generated. The receiving side adds them with `useWebRTC.addIceCandidate`. Candidates that arrive before the remote description is set are buffered and flushed automatically.
+
+    ```ts context/CallContext.tsx
+    socket.on('call:signal', async ({ signalData }) => {
+      if (signalData.type === 'ice' && signalData.candidate) {
+        await addIceCandidate(signalData.candidate);
+      }
+    });
+    ```
+  </Step>
+
+  <Step title="Ending the call">
+    Either party calls `endCall()` which emits `call:end`, cleans up the `RTCPeerConnection`, stops all media tracks, and navigates back.
+  </Step>
+</Steps>
+
+### Pending Call Delivery
+
+If the recipient's socket is not currently connected, the server holds the call request for up to **60 seconds**. During this window the server emits `call:waiting` to the caller to indicate the call is pending. When the recipient reconnects within the window, the server delivers `call:incoming` normally.
+
+If the recipient does not reconnect in time, the server emits `call:unavailable` to the caller with a `reason` field.
+
+### Call Socket Events Reference
+
+| Event | Direction | Payload | Description |
+|-------|-----------|---------|-------------|
+| `call:request` | client → server | `{ paraId, isVideo, signalData, callerName, callerPhoto }` | Initiate a call with a real SDP offer |
+| `call:incoming` | server → client | `{ fromId, callerName, callerPhoto, isVideo, signalData }` | Delivered to recipient with the SDP offer |
+| `call:accept` | client → server | `{ paraId, signalData }` | Accept call with a real SDP answer |
+| `call:accepted` | server → client | `{ signalData, answererId }` | Delivered to caller with the SDP answer |
+| `call:reject` | client → server | `{ paraId }` | Reject an incoming call |
+| `call:rejected` | server → client | — | Delivered to caller when call is rejected |
+| `call:end` | client → server | `{ paraId }` | End an active call |
+| `call:ended` | server → client | — | Delivered to the other party when call ends |
+| `call:signal` | client ↔ server ↔ client | `{ paraId, signalData }` | Relay ICE candidates between peers |
+| `call:unavailable` | server → client | `{ paraId, reason }` | Recipient could not be reached |
+| `call:waiting` | server → client | `{ paraId, reason }` | Call is pending — recipient is offline |
+
+### useWebRTC
+
+`useWebRTC(socket)` exports an identical API whether running in Expo Go or a native build. In Expo Go it returns a stub implementation that shows an alert and produces no real audio or video. In a native build it uses `react-native-webrtc` to create a real `RTCPeerConnection`.
+
+```ts hooks/useWebRTC.ts
+const {
+  localStream,     // own camera/mic stream
+  remoteStream,    // peer's stream — bind to RTCView
+  isConnected,     // true when ICE state is 'connected' or 'completed'
+  createOffer,     // (toId: string, isVideo: boolean) => Promise<RTCSessionDescription>
+  createAnswer,    // (toId, offerSdp, isVideo) => Promise<RTCSessionDescription>
+  setRemoteAnswer, // (answerSdp) => Promise<void>
+  addIceCandidate, // (candidate) => Promise<void>
+  toggleMute,      // (muted: boolean) => void
+  toggleCamera,    // (off: boolean) => void
+  cleanup,         // () => void — call when hanging up
+} = useWebRTC(socket);
+```
+
+ICE servers are configured with four Google STUN servers and three OpenRelay TURN servers (HTTP, HTTPS, and TLS):
+
+```ts hooks/useWebRTC.ts
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    // ... TURN on port 443 and TURNS on 443
+  ],
+  iceCandidatePoolSize: 10,
+  bundlePolicy: 'max-bundle',
+  rtcpMuxPolicy: 'require',
+};
+```
+
+<Note>
+  The OpenRelay TURN servers are suitable for development and testing. For production, register your own TURN credentials at [metered.ca](https://metered.ca) and update `RTC_CONFIG`.
+</Note>
+
+---
+
+## Date Suggestion Events
+
+After 5 messages have been exchanged within a match, the backend automatically pushes a `cita:sugerencia` event to both users recommending a venue for a date. The `useChat` hook handles this transparently:
+
+| Event | Description |
+|-------|-------------|
+| `cita:sugerencia` | Initial suggestion pushed to both users after the 5-message threshold |
+| `cita:nueva-sugerencia` | Pushed when either user calls `requestNewPlace()` via `POST /matches/:id/suggest-new-place` |
+| `cita:estado-actualizado` | Pushed when one user accepts or rejects the current suggestion |
+
+```ts hooks/useChat.ts
+socket.on('cita:sugerencia', (data: DateSuggestion) => {
+  setDateSuggestion(data);
+});
+```
+
+The `DateSuggestion` payload includes the full `restaurante` object (name, description, address, photos, menu, hours, price range), a suggested `fecha`, and a `recomendacion` status object tracking whether each user has accepted.

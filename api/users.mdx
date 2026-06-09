@@ -1,0 +1,670 @@
+---
+title: "User Registration and Profile Management API"
+sidebarTitle: "Users"
+description: "REST endpoints for registering users, browsing the discover feed, retrieving profiles, and managing avatar, cover photo, and gallery photos via Cloudinary."
+---
+
+The Users API covers the full lifecycle of a Debuta profile: initial registration, the swipe discovery feed, profile text and location updates, and all Cloudinary-backed photo operations. All endpoints except `POST /api/users/register` require a valid JWT in the `Authorization` header.
+
+Photo uploads use `multipart/form-data` and are handled by an upload middleware that buffers the file before passing it to Cloudinary. The gallery is capped at **6 photos**. Profile picture, cover photo, and gallery photos each have dedicated upload and delete endpoints so the client can manage them independently.
+
+---
+
+## POST /api/users/register
+
+Creates a new local Debuta account. Optionally accepts a base64-encoded facial photo (`facePhoto`) that is uploaded to Cloudinary and stored as the profile picture; if the upload succeeds the account is also marked `is_verified: true`.
+
+**Auth required:** No
+
+### Request body
+
+```json
+{
+  "nombre": "Ana",
+  "apellido": "García",
+  "correo": "ana@example.com",
+  "telefono": "5512345678",
+  "password": "segura123",
+  "genero": "femenino",
+  "fechaNacimiento": "1998-04-12",
+  "ciudad": "Ciudad de México",
+  "pais": "México",
+  "bio": "Amante del café ☕",
+  "intereses": [{ "name": "Senderismo", "icon": "🥾" }],
+  "buscando": "citas",
+  "facePhoto": "data:image/jpeg;base64,/9j/4AAQSkZJRgAB..."
+}
+```
+
+<ParamField body="nombre" type="string" required>
+  First name. Stored as `first_name`. Used as the base for auto-generating `username`.
+</ParamField>
+
+<ParamField body="apellido" type="string">
+  Last name. Stored as `last_name`. Optional.
+</ParamField>
+
+<ParamField body="correo" type="string" required>
+  Email address. Must be unique. Normalised to lowercase.
+</ParamField>
+
+<ParamField body="telefono" type="string" required>
+  Phone number. Must be 7–15 digits.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Plaintext password. Minimum 6 characters. Hashed with bcrypt (cost 12) before storage.
+</ParamField>
+
+<ParamField body="genero" type="string" required>
+  Gender. One of: `masculino`, `femenino`, `no_binario`, `otro`, `prefiero_no_decir`.
+</ParamField>
+
+<ParamField body="fechaNacimiento" type="string" required>
+  Date of birth in any format parseable by `new Date()`. Example: `"1998-04-12"`.
+</ParamField>
+
+<ParamField body="ciudad" type="string">
+  City name.
+</ParamField>
+
+<ParamField body="pais" type="string">
+  Country name.
+</ParamField>
+
+<ParamField body="bio" type="string">
+  Profile bio. Max 500 characters.
+</ParamField>
+
+<ParamField body="intereses" type="array">
+  Array of interest objects or plain strings. Strings are normalised to `{ name, icon: '' }` automatically. Example: `[{ "name": "Senderismo", "icon": "🥾" }]` or `["Senderismo"]`.
+</ParamField>
+
+<ParamField body="buscando" type="string">
+  What the user is looking for: `amistad`, `citas`, `serio`, `casual`, `no_lo_se`, or empty string.
+</ParamField>
+
+<ParamField body="facePhoto" type="string">
+  Optional base64-encoded image (with or without the `data:image/...;base64,` prefix). When provided, it is uploaded to Cloudinary as the profile picture and the account is set to `is_verified: true`.
+</ParamField>
+
+### Response — 201 Created
+
+```json
+{
+  "message": "Usuario registrado correctamente",
+  "usuario": {
+    "id": "665f1a2b3c4d5e6f78901234",
+    "username": "ana_garcia1042",
+    "first_name": "Ana",
+    "last_name": "García",
+    "correo": "ana@example.com",
+    "is_verified": true
+  }
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | One or more required fields are missing (returns an `errores` array) |
+| `400`  | `password` is shorter than 6 characters |
+| `400`  | Email is already registered |
+| `400`  | MongoDB duplicate key on `correo` or `username` |
+| `500`  | Internal server error |
+
+### curl example
+
+```bash
+curl -X POST https://api.debuta.app/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Ana",
+    "apellido": "García",
+    "correo": "ana@example.com",
+    "telefono": "5512345678",
+    "password": "segura123",
+    "genero": "femenino",
+    "fechaNacimiento": "1998-04-12"
+  }'
+```
+
+---
+
+## GET /api/users/discover
+
+Returns a paginated list of profiles for the swipe feed. Results are filtered by the authenticated user's settings (distance, age range, gender preference, advanced filters) and sorted by a computed affinity score. Users who have already been interacted with (liked or disliked) are excluded.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Query parameters
+
+<ParamField query="pagina" type="number">
+  Page number (1-based). Default: `1`.
+</ParamField>
+
+<ParamField query="limite" type="number">
+  Maximum profiles to return per page. Default: `10`.
+</ParamField>
+
+### Active filters (from user settings)
+
+| Setting | Effect |
+|---------|--------|
+| `show_me` | Filter by gender (`M` → `masculino`, `F` → `femenino`, `ALL` → no filter) |
+| `min_age` / `max_age` | Filter by `birth_date` range |
+| `max_distance` | Geospatial `$geoWithin $centerSphere` filter using the authenticated user's `latitude`/`longitude`. Users with no location set are always included. |
+| `verified_only` | Only return `is_verified: true` profiles |
+| `has_bio_only` | Only return profiles with a non-empty `bio` |
+| `min_photos` | Only return profiles with at least this many gallery photos |
+| `looking_for` | Filter by `buscando` field (skipped when `ALL` or empty) |
+| `interests_filter` | Return profiles that share at least one of the listed interest names |
+
+Profiles with `activo: false`, `rol != 'user'`, or `settings.profile_visible: false` are always excluded.
+
+### Response — 200 OK
+
+```json
+{
+  "usuarios": [
+    {
+      "id": "665f1b3c4d5e6f789012ab",
+      "first_name": "Carlos",
+      "last_name": "Méndez",
+      "username": "carlos8813",
+      "bio": "Fan del jazz y la cocina italiana 🎷",
+      "gender": "masculino",
+      "birth_date": "1995-07-20T00:00:00.000Z",
+      "profile_picture": {
+        "url": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/xyz.jpg",
+        "public_id": "profiles/xyz"
+      },
+      "photos": [],
+      "interests": [{ "name": "Jazz", "icon": "🎷" }],
+      "is_verified": true,
+      "ciudad": "Ciudad de México",
+      "pais": "México",
+      "location_label": "CDMX, México",
+      "buscando": "serio",
+      "afinidad": {
+        "score": 7,
+        "amigosFB": 1,
+        "interesesComun": 2,
+        "ciudadComun": true,
+        "edadSimilar": true,
+        "resumen": "1 amigo en común · 2 intereses en común · misma ciudad"
+      }
+    }
+  ]
+}
+```
+
+<ResponseField name="usuarios" type="array">
+  Array of user profile objects, sorted descending by `afinidad.score`.
+</ResponseField>
+
+<ResponseField name="usuarios[].afinidad" type="object">
+  Affinity breakdown for the current user vs. this profile.
+
+  - `score` — composite score: `amigosFB × 3 + interesesComun × 2 + ciudadComun ? 2 : 0 + edadSimilar ? 1 : 0`
+  - `amigosFB` — mutual Facebook friends registered in Debuta
+  - `interesesComun` — number of shared interest names
+  - `ciudadComun` — both users share the same city (boolean)
+  - `edadSimilar` — age difference ≤ 5 years (boolean)
+  - `resumen` — ready-to-display summary string, or `null`
+</ResponseField>
+
+### curl example
+
+```bash
+curl "https://api.debuta.app/api/users/discover?pagina=1&limite=10" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## GET /api/users/me/stats
+
+Returns activity statistics for the authenticated user.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Response — 200 OK
+
+```json
+{
+  "matches": 14,
+  "likesGiven": 47
+}
+```
+
+<ResponseField name="matches" type="number">
+  Total number of completed matches (both parties gave a like).
+</ResponseField>
+
+<ResponseField name="likesGiven" type="number">
+  Total number of likes the authenticated user has sent.
+</ResponseField>
+
+### curl example
+
+```bash
+curl https://api.debuta.app/api/users/me/stats \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## PUT /api/users/profile
+
+Updates text and location fields on the authenticated user's profile. Does **not** handle photo uploads — use the dedicated photo endpoints for those. Only fields present in the request body are updated; all others are left unchanged.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Updatable fields
+
+<ParamField body="bio" type="string">
+  Profile bio. Max 500 characters.
+</ParamField>
+
+<ParamField body="first_name" type="string">
+  First name.
+</ParamField>
+
+<ParamField body="last_name" type="string">
+  Last name.
+</ParamField>
+
+<ParamField body="interests" type="array">
+  Full replacement of the interests array: `[{ name: string, icon: string }]`.
+</ParamField>
+
+<ParamField body="latitude" type="number">
+  GPS latitude. Updating this also syncs the GeoJSON `location` field automatically via a `pre-save` hook.
+</ParamField>
+
+<ParamField body="longitude" type="number">
+  GPS longitude.
+</ParamField>
+
+<ParamField body="ciudad" type="string">
+  City name.
+</ParamField>
+
+<ParamField body="pais" type="string">
+  Country name.
+</ParamField>
+
+<ParamField body="location_label" type="string">
+  Human-readable location label (e.g. `"CDMX, México"`).
+</ParamField>
+
+<ParamField body="job_title" type="string">
+  Job title. Max 100 characters.
+</ParamField>
+
+<ParamField body="company" type="string">
+  Employer name. Max 100 characters.
+</ParamField>
+
+<ParamField body="education" type="string">
+  Educational institution. Max 150 characters.
+</ParamField>
+
+<ParamField body="relationship_status" type="string">
+  One of: `single`, `in_relationship`, `married`, `complicated`, `prefer_not_say`, or empty string.
+</ParamField>
+
+<ParamField body="website" type="string">
+  Personal website URL. Max 200 characters.
+</ParamField>
+
+<ParamField body="buscando" type="string">
+  Looking for: `amistad`, `citas`, `serio`, `casual`, `no_lo_se`, or empty string.
+</ParamField>
+
+<ParamField body="religion" type="string">
+  Religion (free-text).
+</ParamField>
+
+<ParamField body="zodiac" type="string">
+  Zodiac sign (free-text).
+</ParamField>
+
+<ParamField body="smoke" type="string">
+  Smoking habit: `si`, `no`, `socialmente`, `ocasionalmente`, or empty string.
+</ParamField>
+
+<ParamField body="drink" type="string">
+  Drinking habit: `si`, `no`, `socialmente`, `ocasionalmente`, or empty string.
+</ParamField>
+
+<ParamField body="languages" type="array">
+  Array of language name strings.
+</ParamField>
+
+<ParamField body="height" type="number">
+  Height in centimetres.
+</ParamField>
+
+<ParamField body="exercise" type="string">
+  Exercise frequency: `siempre`, `a_veces`, `nunca`, or empty string.
+</ParamField>
+
+<ParamField body="settings" type="object">
+  Partial settings update. Deep-merged with the existing settings. The `privacy` sub-object is also deep-merged if provided.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Perfil actualizado",
+  "usuario": { "...": "full serialized user object" }
+}
+```
+
+### curl example
+
+```bash
+curl -X PUT https://api.debuta.app/api/users/profile \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bio": "Amante del senderismo y el café ☕🥾",
+    "ciudad": "Guadalajara",
+    "job_title": "Ingeniero de Software"
+  }'
+```
+
+---
+
+## Photo management endpoints
+
+All photo endpoints use `multipart/form-data` for uploads. Images are stored in Cloudinary; the database holds only the `{ url, public_id }` pair.
+
+<CardGroup cols={2}>
+  <Card title="Profile Picture" icon="circle-user">
+    **POST** `/api/users/profile/avatar` — upload or replace  
+    **DELETE** `/api/users/profile/avatar` — remove
+  </Card>
+  <Card title="Cover Photo" icon="image">
+    **POST** `/api/users/profile/cover` — upload or replace  
+    **DELETE** `/api/users/profile/cover` — remove
+  </Card>
+</CardGroup>
+
+---
+
+### POST /api/users/profile/avatar
+
+Uploads a new profile picture. If a previous one exists, it is deleted from Cloudinary first.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`  
+**Content-Type:** `multipart/form-data`
+
+<ParamField body="file" type="file" required>
+  The image file. Field name must be `file`. Any image format supported by Cloudinary.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Foto de perfil actualizada",
+  "profile_picture": {
+    "url": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/abc.jpg",
+    "public_id": "profiles/abc"
+  },
+  "usuario": { "...": "full serialized user object" }
+}
+```
+
+### curl example
+
+```bash
+curl -X POST https://api.debuta.app/api/users/profile/avatar \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -F "file=@/path/to/photo.jpg"
+```
+
+---
+
+### DELETE /api/users/profile/avatar
+
+Removes the profile picture from Cloudinary and clears `profile_picture` to `null`.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Foto de perfil eliminada",
+  "usuario": { "...": "full serialized user object" }
+}
+```
+
+### curl example
+
+```bash
+curl -X DELETE https://api.debuta.app/api/users/profile/avatar \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+### POST /api/users/profile/cover
+
+Uploads a new cover photo. If a previous cover photo exists, it is deleted from Cloudinary first.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`  
+**Content-Type:** `multipart/form-data`
+
+<ParamField body="file" type="file" required>
+  The image file. Field name must be `file`.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Foto de portada actualizada",
+  "cover_photo": {
+    "url": "https://res.cloudinary.com/debuta/image/upload/v1/covers/def.jpg",
+    "public_id": "covers/def"
+  },
+  "usuario": { "...": "full serialized user object" }
+}
+```
+
+### curl example
+
+```bash
+curl -X POST https://api.debuta.app/api/users/profile/cover \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -F "file=@/path/to/cover.jpg"
+```
+
+---
+
+### DELETE /api/users/profile/cover
+
+Removes the cover photo from Cloudinary and clears `cover_photo` to `null`.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Foto de portada eliminada",
+  "usuario": { "...": "full serialized user object" }
+}
+```
+
+### curl example
+
+```bash
+curl -X DELETE https://api.debuta.app/api/users/profile/cover \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+### POST /api/users/profile/photos
+
+Adds one or more images to the gallery. The gallery has a hard cap of **6 photos**. If the user already has some photos, only enough new ones are accepted to reach 6 total — the rest are silently ignored.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`  
+**Content-Type:** `multipart/form-data`
+
+<ParamField body="files" type="file[]" required>
+  One or more image files. Field name must be `files`. Accepts multiple files in a single request.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "message": "2 foto(s) agregada(s)",
+  "photos": [
+    { "url": "https://res.cloudinary.com/.../g1.jpg", "public_id": "gallery/g1" },
+    { "url": "https://res.cloudinary.com/.../g2.jpg", "public_id": "gallery/g2" }
+  ],
+  "usuario": { "...": "full serialized user object" }
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | No files received |
+| `400`  | Gallery already has 6 photos |
+
+### curl example
+
+```bash
+curl -X POST https://api.debuta.app/api/users/profile/photos \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -F "files=@/path/to/photo1.jpg" \
+  -F "files=@/path/to/photo2.jpg"
+```
+
+---
+
+### DELETE /api/users/profile/photos/:encodedId
+
+Removes a single photo from the gallery by its Cloudinary `public_id`. Because `public_id` values contain slashes, the client must **base64url-encode** the `public_id` before placing it in the URL path.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+<ParamField path="encodedId" type="string" required>
+  The Cloudinary `public_id` encoded with Base64url (`Buffer.from(publicId).toString('base64url')` in Node.js). Example: `public_id = "gallery/abc123"` → `encodedId = "Z2FsbGVyeS9hYmMxMjM"`.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Foto eliminada",
+  "photos": [
+    { "url": "https://res.cloudinary.com/.../remaining.jpg", "public_id": "gallery/remaining" }
+  ]
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `404`  | No photo with the decoded `public_id` found in the user's gallery |
+
+### curl example
+
+```bash
+# Encode the public_id first
+ENCODED=$(node -e "console.log(Buffer.from('gallery/abc123').toString('base64url'))")
+
+curl -X DELETE "https://api.debuta.app/api/users/profile/photos/${ENCODED}" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## GET /api/users/:id
+
+Retrieves the public-facing profile of another user. Returns a subset of fields safe to display to other users.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+<ParamField path="id" type="string" required>
+  MongoDB ObjectId of the target user.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "usuario": {
+    "_id": "665f1b3c4d5e6f789012ab",
+    "first_name": "Carlos",
+    "last_name": "Méndez",
+    "username": "carlos8813",
+    "bio": "Fan del jazz 🎷",
+    "profile_picture": { "url": "...", "public_id": "..." },
+    "photos": [],
+    "interests": [{ "name": "Jazz", "icon": "🎷" }],
+    "gender": "masculino",
+    "birth_date": "1995-07-20T00:00:00.000Z",
+    "is_verified": true,
+    "ciudad": "Ciudad de México",
+    "pais": "México",
+    "location_label": "CDMX, México",
+    "buscando": "serio"
+  }
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `id` is not a valid MongoDB ObjectId |
+| `404`  | User not found |
+
+### curl example
+
+```bash
+curl https://api.debuta.app/api/users/665f1b3c4d5e6f789012ab \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## DELETE /api/users/me
+
+Permanently and irreversibly deletes the authenticated user's account and all associated Cloudinary assets (profile picture, cover photo, and all gallery photos). This action cannot be undone.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Cuenta eliminada correctamente"
+}
+```
+
+<Warning>
+  This endpoint permanently deletes the MongoDB document and all Cloudinary images. There is no soft-delete or recovery mechanism. Cloudinary deletions are fire-and-forget (`Promise.allSettled`) — a Cloudinary failure will not prevent the database record from being removed.
+</Warning>
+
+### curl example
+
+```bash
+curl -X DELETE https://api.debuta.app/api/users/me \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```

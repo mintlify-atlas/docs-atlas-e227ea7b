@@ -1,0 +1,352 @@
+---
+title: "Posts API — Profile Wall and Social Feed"
+sidebarTitle: "Posts"
+description: "CRUD endpoints for user posts on profile walls: create with optional image, list posts, toggle likes on posts, and delete posts. All require authentication."
+---
+
+Every Debuta user has a profile wall where they can share posts — text, an image, or both. These endpoints cover the full lifecycle of a post: creation (with optional Cloudinary image upload), fetching your own or another user's timeline, toggling likes, and deletion. All five routes require a valid JWT in the `Authorization` header.
+
+---
+
+## The Post Object
+
+Every endpoint that returns a post (or array of posts) uses the following shape:
+
+<ResponseField name="post" type="object">
+  A single post document.
+
+  <Expandable title="Post fields">
+    <ResponseField name="_id" type="string">
+      MongoDB ObjectId — unique identifier for the post.
+    </ResponseField>
+    <ResponseField name="text" type="string">
+      Post body text. Maximum 500 characters. May be empty if the post is image-only.
+    </ResponseField>
+    <ResponseField name="image" type="object | null">
+      Present when the post includes an uploaded image.
+      <Expandable title="image fields">
+        <ResponseField name="url" type="string">
+          Public Cloudinary URL of the image.
+        </ResponseField>
+        <ResponseField name="public_id" type="string">
+          Cloudinary `public_id` used internally for deletion.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="author" type="object">
+      Populated author snapshot.
+      <Expandable title="author fields">
+        <ResponseField name="first_name" type="string">Author's first name.</ResponseField>
+        <ResponseField name="last_name" type="string">Author's last name.</ResponseField>
+        <ResponseField name="username" type="string">Author's unique handle.</ResponseField>
+        <ResponseField name="profile_picture" type="object">Author's profile picture (`url`, `public_id`).</ResponseField>
+        <ResponseField name="is_verified" type="boolean">Whether the author has completed facial verification.</ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="likes" type="string[]">
+      Array of user ObjectIds who have liked the post. Use `.length` for the count.
+    </ResponseField>
+    <ResponseField name="createdAt" type="string">
+      ISO 8601 timestamp of when the post was created.
+    </ResponseField>
+    <ResponseField name="updatedAt" type="string">
+      ISO 8601 timestamp of the last update.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Endpoints
+
+<CardGroup cols={2}>
+  <Card title="POST /api/posts" icon="plus">
+    Create a new post with optional image upload.
+  </Card>
+  <Card title="GET /api/posts/me" icon="user">
+    Fetch the current user's own posts.
+  </Card>
+  <Card title="GET /api/posts/user/:id" icon="users">
+    Fetch posts by another user's ID.
+  </Card>
+  <Card title="POST /api/posts/:id/like" icon="heart">
+    Toggle a like on a post.
+  </Card>
+  <Card title="DELETE /api/posts/:id" icon="trash">
+    Delete a post you own.
+  </Card>
+</CardGroup>
+
+---
+
+### POST /api/posts
+
+Creates a new post. The request body must contain at least a non-empty `text` field or a `file` attachment — sending neither returns `400`. When a file is included, it is uploaded to Cloudinary before the post is saved.
+
+**Authentication:** Bearer JWT required.
+
+**Content-Type:** `multipart/form-data` (when attaching a file) or `application/json` (text-only).
+
+#### Request body
+
+<ParamField body="text" type="string" required>
+  The text content of the post. Maximum 500 characters. Required if no `file` is supplied.
+</ParamField>
+
+<ParamField body="file" type="file">
+  Optional image file. Sent as a multipart field named `file`. Uploaded to Cloudinary automatically.
+</ParamField>
+
+#### Response `201`
+
+```json
+{
+  "message": "Publicación creada",
+  "post": {
+    "_id": "665f1a2b3c4d5e6f7a8b9c0d",
+    "text": "Enjoying a perfect first date evening ✨",
+    "image": {
+      "url": "https://res.cloudinary.com/debuta/image/upload/v1/posts/abc123.jpg",
+      "public_id": "posts/abc123"
+    },
+    "author": {
+      "first_name": "Sofía",
+      "last_name": "Ramírez",
+      "username": "sofi.r",
+      "profile_picture": {
+        "url": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/xyz.jpg",
+        "public_id": "profiles/xyz"
+      },
+      "is_verified": true
+    },
+    "likes": [],
+    "createdAt": "2024-06-04T18:30:00.000Z",
+    "updatedAt": "2024-06-04T18:30:00.000Z"
+  }
+}
+```
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Neither `text` nor `file` was provided. |
+| `401`  | Missing or invalid JWT. |
+| `500`  | Cloudinary upload failed or internal server error. |
+
+#### curl example
+
+```bash
+# Text-only post
+curl -X POST https://api.debuta.app/api/posts \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Enjoying a perfect first date evening ✨"}'
+
+# Post with image
+curl -X POST https://api.debuta.app/api/posts \
+  -H "Authorization: Bearer <token>" \
+  -F "text=Look at this amazing restaurant 🍷" \
+  -F "file=@/path/to/photo.jpg"
+```
+
+---
+
+### GET /api/posts/me
+
+Returns a paginated list of posts created by the currently authenticated user, sorted newest first.
+
+**Authentication:** Bearer JWT required.
+
+#### Query parameters
+
+<ParamField query="page" type="integer" default="1">
+  Page number for pagination.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="20">
+  Number of posts per page. Maximum enforced by the client; server default is 20.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "posts": [
+    {
+      "_id": "665f1a2b3c4d5e6f7a8b9c0d",
+      "text": "My first post on Debuta!",
+      "image": null,
+      "author": {
+        "first_name": "Sofía",
+        "last_name": "Ramírez",
+        "username": "sofi.r",
+        "profile_picture": { "url": "...", "public_id": "..." },
+        "is_verified": true
+      },
+      "likes": ["665f000000000000000000aa"],
+      "createdAt": "2024-06-01T10:00:00.000Z",
+      "updatedAt": "2024-06-01T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+#### curl example
+
+```bash
+curl -X GET "https://api.debuta.app/api/posts/me?page=1&limit=10" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+### GET /api/posts/user/:id
+
+Returns a paginated list of posts for any user by their MongoDB ObjectId. Used when viewing another user's profile wall.
+
+**Authentication:** Bearer JWT required.
+
+#### Path parameters
+
+<ParamField path="id" type="string" required>
+  MongoDB ObjectId of the target user. Returns `400` if the ID format is invalid.
+</ParamField>
+
+#### Query parameters
+
+<ParamField query="page" type="integer" default="1">
+  Page number.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="20">
+  Posts per page.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "posts": [
+    {
+      "_id": "665f1a2b3c4d5e6f7a8b9c0e",
+      "text": "Incredible sunset tonight 🌅",
+      "image": {
+        "url": "https://res.cloudinary.com/debuta/image/upload/v1/posts/sunset.jpg",
+        "public_id": "posts/sunset"
+      },
+      "author": {
+        "first_name": "Carlos",
+        "last_name": "Mendoza",
+        "username": "carlos.m",
+        "profile_picture": { "url": "...", "public_id": "..." },
+        "is_verified": true
+      },
+      "likes": [],
+      "createdAt": "2024-06-03T20:15:00.000Z",
+      "updatedAt": "2024-06-03T20:15:00.000Z"
+    }
+  ]
+}
+```
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `:id` is not a valid MongoDB ObjectId. |
+| `401`  | Missing or invalid JWT. |
+
+#### curl example
+
+```bash
+curl -X GET "https://api.debuta.app/api/posts/user/665f000000000000000000bb?page=1" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+### POST /api/posts/:id/like
+
+Toggles a like on a post. If the authenticated user has **not** previously liked the post their ID is added to the `likes` array; if they **have** already liked it, their ID is removed. This is idempotent — calling it twice returns the post to its original state.
+
+**Authentication:** Bearer JWT required.
+
+#### Path parameters
+
+<ParamField path="id" type="string" required>
+  MongoDB ObjectId of the post to like or unlike.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "likes": 5,
+  "liked": true
+}
+```
+
+<ResponseField name="likes" type="number">
+  Total number of likes on the post after the toggle.
+</ResponseField>
+
+<ResponseField name="liked" type="boolean">
+  `true` if the current user's action was a **like**; `false` if it was an **unlike**.
+</ResponseField>
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `404`  | Post not found. |
+| `401`  | Missing or invalid JWT. |
+
+#### curl example
+
+```bash
+# Like (or unlike) a post
+curl -X POST https://api.debuta.app/api/posts/665f1a2b3c4d5e6f7a8b9c0d/like \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+### DELETE /api/posts/:id
+
+Permanently deletes a post. Only the post's author can delete it — any other authenticated user receives `403`. If the post has an attached Cloudinary image, it is also deleted from Cloudinary before the document is removed.
+
+**Authentication:** Bearer JWT required.
+
+#### Path parameters
+
+<ParamField path="id" type="string" required>
+  MongoDB ObjectId of the post to delete.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "message": "Publicación eliminada"
+}
+```
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `403`  | Authenticated user is not the post author. |
+| `404`  | Post not found. |
+| `401`  | Missing or invalid JWT. |
+
+#### curl example
+
+```bash
+curl -X DELETE https://api.debuta.app/api/posts/665f1a2b3c4d5e6f7a8b9c0d \
+  -H "Authorization: Bearer <token>"
+```
+
+<Warning>
+  Deletion is permanent and cannot be undone. The associated Cloudinary image is also removed as part of the same operation.
+</Warning>

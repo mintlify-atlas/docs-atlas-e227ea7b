@@ -1,0 +1,306 @@
+---
+title: "Facial Verification API — Identity Confirmation"
+sidebarTitle: "Facial"
+description: "Four endpoints for facial recognition: verify a face exists, register a facial reference photo, confirm login with face comparison, and update a stored photo."
+---
+
+Debuta uses facial verification as a trust layer in two distinct flows: **registration** (where a face is validated and saved before the account is fully created) and **login** (where the stored reference photo is compared against a live image as a second factor). All image data is transmitted as a base64-encoded string in the JSON request body — no multipart upload is used for these endpoints.
+
+<Note>
+  The facial reference photo is stored as the user's `profile_picture` on Cloudinary and marks the account as `is_verified: true`. While it is visible on the profile, its primary purpose is identity confirmation — it is the photo taken during the verification step and is distinct from any additional photos a user may add to their gallery.
+</Note>
+
+---
+
+## Authentication model
+
+Three of the four endpoints are **public** (no JWT required) because they are called during the registration and login flows before a session token exists. The `PUT /api/facial/update` endpoint requires a valid token because it is used from inside the app by an already-authenticated user.
+
+`POST /api/facial/register` is a special case: it is public but accepts an **optional** JWT header. When called during registration it expects a `userId` in the request body; when called from a logged-in context (e.g. re-taking the photo from settings) it reads the user from the JWT and ignores `userId`.
+
+---
+
+## Endpoints
+
+<CardGroup cols={2}>
+  <Card title="POST /api/facial/verify" icon="camera">
+    Validate that an image contains a human face.
+  </Card>
+  <Card title="POST /api/facial/register" icon="id-card">
+    Save a facial reference photo for a user.
+  </Card>
+  <Card title="POST /api/facial/login-verify" icon="lock">
+    Compare a live photo against the stored reference.
+  </Card>
+  <Card title="PUT /api/facial/update" icon="rotate">
+    Replace the stored photo (authenticated users only).
+  </Card>
+</CardGroup>
+
+---
+
+### POST /api/facial/verify
+
+Validates that the submitted image contains a detectable human face. Called at **registration step 2** before the account is created. If the image does not pass validation the client should prompt the user to retake the photo.
+
+**Authentication:** None (public endpoint).
+
+**Content-Type:** `application/json`
+
+#### Request body
+
+<ParamField body="image" type="string" required>
+  Base64-encoded image string, with or without a `data:image/...;base64,` prefix. Minimum decoded size of ~1 KB is enforced; maximum is ~10 MB.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "ok": true,
+  "message": "Rostro verificado correctamente"
+}
+```
+
+```json
+{
+  "ok": false,
+  "message": "No se detectó un rostro. Asegúrate de buena iluminación y que tu cara esté centrada."
+}
+```
+
+<ResponseField name="ok" type="boolean">
+  `true` if a valid face was detected; `false` otherwise.
+</ResponseField>
+<ResponseField name="message" type="string">
+  Human-readable result description.
+</ResponseField>
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `image` is missing, not a string, or smaller than 1 KB (invalid base64). |
+| `500`  | Internal server error during image processing. |
+
+#### curl example
+
+```bash
+# Encode an image file to base64 and send it
+IMAGE_B64=$(base64 -w 0 /path/to/selfie.jpg)
+
+curl -X POST https://api.debuta.app/api/facial/verify \
+  -H "Content-Type: application/json" \
+  -d "{\"image\": \"${IMAGE_B64}\"}"
+```
+
+---
+
+### POST /api/facial/register
+
+Uploads the facial reference photo to Cloudinary and saves it as the user's `profile_picture`. Also sets `is_verified: true` on the user document. Accepts two calling modes:
+
+- **Registration flow** — no JWT; pass `userId` in the body.
+- **Logged-in update** — send a Bearer token; `userId` in the body is ignored.
+
+**Authentication:** Optional Bearer JWT. If no token is present, `userId` must be in the body.
+
+**Content-Type:** `application/json`
+
+#### Request body
+
+<ParamField body="image" type="string" required>
+  Base64-encoded image. With or without `data:image/...;base64,` prefix. Maximum ~10 MB.
+</ParamField>
+
+<ParamField body="userId" type="string">
+  MongoDB ObjectId of the user. Required when called without a JWT (registration flow). Ignored when a valid token is present.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "ok": true,
+  "message": "Foto facial guardada correctamente",
+  "is_verified": true,
+  "profile_picture": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/abc123.jpg"
+}
+```
+
+<ResponseField name="ok" type="boolean">
+  `true` on success.
+</ResponseField>
+<ResponseField name="message" type="string">
+  Confirmation message.
+</ResponseField>
+<ResponseField name="is_verified" type="boolean">
+  Always `true` after a successful registration — reflects the updated field on the user document.
+</ResponseField>
+<ResponseField name="profile_picture" type="string">
+  Public Cloudinary URL of the saved photo.
+</ResponseField>
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `image` is missing or invalid. |
+| `400`  | `image` exceeds ~10 MB. |
+| `400`  | Neither a JWT nor a `userId` body field was provided. |
+| `404`  | User not found for the given `userId` or token. |
+| `502`  | Cloudinary upload failed. |
+
+#### curl examples
+
+```bash
+# Registration flow — userId in body, no token
+IMAGE_B64=$(base64 -w 0 /path/to/selfie.jpg)
+
+curl -X POST https://api.debuta.app/api/facial/register \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"image\": \"${IMAGE_B64}\",
+    \"userId\": \"665f000000000000000000aa\"
+  }"
+
+# Logged-in update — token in header, no userId needed
+curl -X POST https://api.debuta.app/api/facial/register \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"image\": \"${IMAGE_B64}\"}"
+```
+
+---
+
+### POST /api/facial/login-verify
+
+Compares a live selfie against the stored facial reference photo for a given email address. Used as a **second factor during login** after the password has been verified. If the user does not yet have a stored facial photo the endpoint returns `ok: true` to avoid blocking legacy accounts.
+
+**Authentication:** None (public endpoint).
+
+**Content-Type:** `application/json`
+
+#### Request body
+
+<ParamField body="correo" type="string" required>
+  Email address of the user attempting to log in.
+</ParamField>
+
+<ParamField body="image" type="string" required>
+  Base64-encoded live photo for comparison. Same format rules as `/api/facial/verify`.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "ok": true,
+  "message": "Rostro verificado correctamente",
+  "hasFacialPhoto": true
+}
+```
+
+```json
+{
+  "ok": false,
+  "message": "El rostro no coincide con el registrado. Intenta de nuevo."
+}
+```
+
+<ResponseField name="ok" type="boolean">
+  `true` if the face matches (or if no reference photo is stored); `false` on mismatch.
+</ResponseField>
+<ResponseField name="message" type="string">
+  Human-readable result.
+</ResponseField>
+<ResponseField name="hasFacialPhoto" type="boolean">
+  Included on success. `false` when the user has no stored reference photo and access was allowed unconditionally.
+</ResponseField>
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `correo` is missing or `image` is invalid base64. |
+| `500`  | Internal server error. |
+
+<Note>
+  For security, the endpoint never reveals whether an email address exists in the system when returning `ok: false`. This prevents email enumeration attacks.
+</Note>
+
+#### curl example
+
+```bash
+IMAGE_B64=$(base64 -w 0 /path/to/login-selfie.jpg)
+
+curl -X POST https://api.debuta.app/api/facial/login-verify \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"correo\": \"sofia@example.com\",
+    \"image\": \"${IMAGE_B64}\"
+  }"
+```
+
+---
+
+### PUT /api/facial/update
+
+Replaces the authenticated user's stored facial reference photo. Functionally identical to calling `POST /api/facial/register` with a valid token, but the `PUT` method makes the intent explicit — this route is for **updating an existing photo** from inside the app (e.g. the Settings screen).
+
+**Authentication:** Bearer JWT required.
+
+**Content-Type:** `application/json`
+
+#### Request body
+
+<ParamField body="image" type="string" required>
+  Base64-encoded replacement photo. Maximum ~10 MB.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "ok": true,
+  "message": "Foto facial guardada correctamente",
+  "is_verified": true,
+  "profile_picture": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/new456.jpg"
+}
+```
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `image` is missing, invalid, or too large. |
+| `401`  | Missing or invalid JWT. |
+| `404`  | User record not found. |
+| `502`  | Cloudinary upload failed. |
+
+#### curl example
+
+```bash
+IMAGE_B64=$(base64 -w 0 /path/to/new-selfie.jpg)
+
+curl -X PUT https://api.debuta.app/api/facial/update \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"image\": \"${IMAGE_B64}\"}"
+```
+
+---
+
+## Registration flow overview
+
+<Steps>
+  <Step title="Validate face">
+    Call `POST /api/facial/verify` with the captured selfie. If `ok` is `false`, ask the user to retake the photo.
+  </Step>
+  <Step title="Create account">
+    Submit the registration form (name, email, password, etc.) to `POST /api/auth/register`. Save the returned `userId`.
+  </Step>
+  <Step title="Save reference photo">
+    Call `POST /api/facial/register` with the same selfie base64 and the `userId` from step 2. The user is now marked `is_verified: true`.
+  </Step>
+</Steps>

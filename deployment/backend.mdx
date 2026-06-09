@@ -1,0 +1,186 @@
+---
+title: "Deploy the Debuta Backend to Production"
+sidebarTitle: "Backend"
+description: "How to deploy the Debuta Node.js backend to a production server: environment setup, MongoDB Atlas configuration, CORS, Cloudinary, and running with Node."
+---
+
+The Debuta backend is a Node.js/Express application that serves the REST API, Socket.IO real-time layer, and the static admin panel files from a single process. Deploying it requires a VPS or cloud instance, a MongoDB Atlas cluster, a Cloudinary account for photo storage, and a set of environment variables to wire everything together.
+
+<Steps>
+
+### Provision a Server
+
+Choose any Linux VPS or cloud compute instance. The backend has been developed and tested on **Node.js 18+**. Verify the installed version before proceeding:
+
+```bash
+node --version   # must be >= 18
+```
+
+Ensure ports `80`/`443` (or your chosen `PORT`) are open in the server's firewall and that you have a domain name pointed at the server's IP address.
+
+### Clone and Install
+
+```bash
+git clone https://github.com/your-org/debuta.git
+cd debuta/backend
+npm install
+```
+
+All runtime dependencies — including Express, Mongoose, Socket.IO, Cloudinary, bcryptjs, and jsonwebtoken — are declared in `package.json` and will be installed by `npm install`.
+
+### Configure the Production Environment
+
+Copy the example file and fill in every value:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+The full set of required variables:
+
+```bash
+# Server
+PORT=3000
+NODE_ENV=production
+
+# MongoDB Atlas
+MONGO_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/<dbname>?retryWrites=true&w=majority
+
+# Security
+JWT_SECRET=a-long-random-string-min-64-chars
+JWT_EXPIRES_IN=7d
+
+# CORS — comma-separated, no spaces
+ALLOWED_ORIGINS=https://your-app-web.com,https://your-admin-web.com
+
+# Cloudinary
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+
+# Email (password recovery)
+EMAIL_USER=your_email@gmail.com
+EMAIL_PASS=your_gmail_app_password
+
+# Admin panel seed credentials
+ADMIN_EMAIL=admin@debuta.com
+ADMIN_USERNAME=admin
+
+# Google OAuth
+GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+
+# Facebook OAuth
+FACEBOOK_APP_ID=your_facebook_app_id
+FACEBOOK_APP_SECRET=your_facebook_app_secret
+
+# Atlas Admin API (optional — needed for auto IP whitelisting)
+ATLAS_PUBLIC_KEY=
+ATLAS_PRIVATE_KEY=
+ATLAS_PROJECT_ID=
+```
+
+`ALLOWED_ORIGINS` must include every origin from which the admin panel or the mobile app's web build will make API requests. Requests from unlisted origins will be blocked by the CORS middleware.
+
+<Warning>
+  Use a strong, randomly generated value for `JWT_SECRET` — at least 64 characters. Never commit the `.env` file to version control. The `ADMIN_EMAIL` and `ADMIN_USERNAME` values seed the initial admin account; rotate the admin password immediately after first login.
+</Warning>
+
+### Configure MongoDB Atlas
+
+1. Create a **production cluster** in [MongoDB Atlas](https://cloud.mongodb.com).
+2. Create a database user with read/write access to the target database.
+3. Copy the connection string into `MONGO_URI` in your `.env`.
+4. **Whitelist the server's IP address** in Atlas → Network Access → Add IP Address.
+
+The backend includes an `scripts/auto-whitelist.js` script that calls the Atlas Admin API to add the current server's public IP automatically at startup. Provide `ATLAS_PUBLIC_KEY`, `ATLAS_PRIVATE_KEY`, and `ATLAS_PROJECT_ID` in `.env` to enable this feature.
+
+<Note>
+  The `package.json` defines `"prestart"` and `"predev"` hooks that both run `node scripts/auto-whitelist.js` before the server starts. If the Atlas API credentials are not set, the script exits silently without blocking startup. You can also run the whitelist script manually at any time with `npm run whitelist`.
+</Note>
+
+### Start the Server
+
+**Direct start (foreground):**
+
+```bash
+npm start
+```
+
+**Recommended: use `pm2` for process management so the server survives reboots and crashes:**
+
+```bash
+npm install -g pm2
+pm2 start server.js --name debuta-backend
+pm2 save
+pm2 startup   # follow the on-screen command to enable auto-start on boot
+```
+
+Useful `pm2` commands:
+
+```bash
+pm2 logs debuta-backend       # stream logs
+pm2 restart debuta-backend    # restart after a config change
+pm2 stop debuta-backend       # stop the process
+pm2 status                    # show process table
+```
+
+### Verify the Deployment
+
+The backend exposes a health check endpoint:
+
+```bash
+curl https://your-domain.com/health
+```
+
+Expected response:
+
+```json
+{ "status": "ok" }
+```
+
+Then verify the admin panel is reachable:
+
+```bash
+curl -I https://your-domain.com/admin
+# HTTP/2 200
+```
+
+And confirm the API login route is responsive:
+
+```bash
+curl -X POST https://your-domain.com/api/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{"correo":"admin@debuta.com","password":"your-password"}'
+```
+
+</Steps>
+
+## Reverse Proxy with Nginx (Recommended)
+
+Run the Node process on an internal port (e.g., `3000`) and front it with Nginx to handle TLS termination and serve the admin static files efficiently:
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name your-domain.com;
+
+  ssl_certificate     /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+
+  location / {
+    proxy_pass         http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade $http_upgrade;
+    proxy_set_header   Connection "upgrade";
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+  }
+}
+```
+
+The `Upgrade` and `Connection` headers are required for Socket.IO WebSocket connections to pass through the proxy correctly.
+
+<Tip>
+  Use [Certbot](https://certbot.eff.org/) with the Nginx plugin to obtain a free Let's Encrypt TLS certificate: `certbot --nginx -d your-domain.com`.
+</Tip>

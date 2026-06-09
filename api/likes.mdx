@@ -1,0 +1,139 @@
+---
+title: "Likes API — See Who Has Liked Your Profile"
+sidebarTitle: "Likes"
+description: "GET /api/likes returns the list of users who liked your profile but are not yet a mutual match. Requires authentication. Powers the LikesScreen in the mobile app."
+---
+
+The Likes API exposes a single endpoint that returns every user who has sent you a like but whom you have not yet liked back — meaning no mutual match exists yet. This powers the **LikesScreen** in the Debuta mobile app, which lets users browse their admirers and decide whether to like them back (creating a match) or ignore them.
+
+The server queries the `Match` collection for documents where:
+
+1. The current user is in the `usuarios` array.
+2. `esMatch` is `false` — no mutual match yet.
+3. Another user's `like` record points **to** the current user (`like.para === me`).
+4. The current user has **not** sent a like of their own in that document (`like.de !== me`).
+
+---
+
+## Endpoint
+
+### GET /api/likes
+
+Returns all received likes that have not yet become mutual matches.
+
+**Authentication:** `Authorization: Bearer <access_token>`
+
+---
+
+### Response `200 OK`
+
+```json
+{
+  "likes": [
+    {
+      "matchId": "64f1a2b3c4d5e6f7a8b9c0d2",
+      "usuario": {
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "first_name": "Sebastián",
+        "last_name": "Mora",
+        "username": "sebamora",
+        "profile_picture": {
+          "url": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/seba.jpg",
+          "public_id": "profiles/seba"
+        },
+        "birth_date": "1995-09-23T00:00:00.000Z",
+        "is_verified": false,
+        "ciudad": "Bogotá"
+      },
+      "liked_at": "2024-07-15T19:44:10.000Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+<ResponseField name="likes" type="object[]">
+  Array of received-like objects. Empty array `[]` if no pending likes exist.
+
+  <ResponseField name="matchId" type="string">
+    ID of the Match document that recorded this like interaction. Pass this as
+    `:targetId` to `POST /api/matches/like/:targetId` to reciprocate.
+  </ResponseField>
+  <ResponseField name="usuario" type="object">
+    Profile of the user who liked you.
+
+    <ResponseField name="id" type="string">
+      User's MongoDB `_id` (normalised from `_id` for frontend compatibility).
+    </ResponseField>
+    <ResponseField name="first_name" type="string">
+      First name.
+    </ResponseField>
+    <ResponseField name="last_name" type="string">
+      Last name.
+    </ResponseField>
+    <ResponseField name="username" type="string">
+      Unique username handle.
+    </ResponseField>
+    <ResponseField name="profile_picture" type="object | null">
+      Cloudinary photo object with `url` and `public_id`, or `null` if no photo set.
+    </ResponseField>
+    <ResponseField name="birth_date" type="string | null">
+      ISO 8601 birth date string used to compute the displayed age.
+    </ResponseField>
+    <ResponseField name="is_verified" type="boolean">
+      Whether the user has completed identity verification.
+    </ResponseField>
+    <ResponseField name="ciudad" type="string">
+      City listed on the user's profile.
+    </ResponseField>
+  </ResponseField>
+
+  <ResponseField name="liked_at" type="string">
+    ISO 8601 timestamp of when the like was sent. Falls back to the Match
+    document's `createdAt` if the like subdocument has no timestamp.
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total count of pending likes returned. Equals `likes.length`.
+</ResponseField>
+
+---
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `401 Unauthorized` | Missing or invalid Bearer token |
+| `500 Internal Server Error` | Database query failure |
+
+---
+
+## Example
+
+```bash
+curl -X GET https://api.debuta.app/api/likes \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## Acting on a like
+
+To like someone back and create a mutual match, call `POST /api/matches/like/:targetId` with the `usuario.id` value from this response:
+
+```bash
+curl -X POST https://api.debuta.app/api/matches/like/64f1a2b3c4d5e6f7a8b9c0d1 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+A successful mutual like returns `{ "esMatch": true, ... }` and emits a `match:nuevo` Socket.io event to both users.
+
+---
+
+<Note>
+  The LikesScreen in the mobile app polls this endpoint on focus to refresh the list.
+  Users who have already been responded to (liked back or disliked) will no longer
+  appear here because the underlying Match document will either have `esMatch: true`
+  or a `dislike` entry from the current user.
+</Note>

@@ -1,0 +1,344 @@
+---
+title: "Socket.io Real-Time Events — Complete Reference"
+sidebarTitle: "Socket Events"
+description: "All Socket.io events in Debuta: presence, messaging, automated date suggestions, and WebRTC audio/video call signalling. Includes client-emit and server-emit payloads."
+---
+
+Debuta uses Socket.io for every feature that requires sub-second delivery: incoming messages, match notifications, presence updates, date suggestion pop-ups, and peer-to-peer call signalling. This page documents every event, its direction, and its payload, drawn directly from `socket.js` and the React Native client contexts.
+
+The Socket.io server runs on the same Express HTTP server. There is no separate WebSocket URL.
+
+---
+
+## Connection
+
+Connect using the standard Socket.io client with JWT authentication passed in the `auth` object:
+
+```typescript
+import { io } from 'socket.io-client';
+
+const socket = io(SERVER_URL, {
+  auth: {
+    token: accessToken,   // JWT obtained from POST /api/auth/login
+    name:  userName,      // Optional: shown to callees in incoming call UI
+    photo: userPhotoUrl,  // Optional: shown to callees in incoming call UI
+  },
+  transports: ['websocket'],
+  reconnectionAttempts: 10,
+  reconnectionDelay: 2000,
+  timeout: 10000,
+});
+```
+
+### What happens on connect
+
+<Steps>
+  <Step title="JWT validation">
+    The server middleware verifies the `token` from `socket.handshake.auth`. An invalid or missing token causes an immediate `connect_error` with the message `"Token inválido"` or `"Token requerido"`.
+  </Step>
+  <Step title="Room assignment">
+    The authenticated user's socket is joined to a personal room named `user:<userId>`. All server-initiated events targeting a specific user are emitted to this room.
+  </Step>
+  <Step title="Presence broadcast">
+    The server broadcasts `usuario:online` with `{ userId }` to all other connected clients.
+  </Step>
+  <Step title="Pending call delivery">
+    If a call was made to this user while they were offline (within the last 60 seconds), the server immediately emits `call:incoming` with the stored call data.
+  </Step>
+</Steps>
+
+---
+
+## Presence events
+
+These events track which users are currently online. Use `presencia:estado` to check a specific user's status before placing a call.
+
+| Event | Direction | Payload | Description |
+|---|---|---|---|
+| `usuario:online` | server → all | `{ userId: string }` | Broadcast when a user connects |
+| `usuario:offline` | server → all | `{ userId: string, lastSeen: Date }` | Broadcast when a user disconnects |
+| `presencia:estado` | client → server | `{ userId: string }` | Request the online status of a specific user |
+| `presencia:respuesta` | server → requester | `{ userId: string, online: boolean, lastSeen: Date \| null }` | Response to a `presencia:estado` query |
+
+### Example — check if a user is online
+
+```typescript
+socket.emit('presencia:estado', { userId: '64f1a2b3c4d5e6f7a8b9c0d1' });
+
+socket.once('presencia:respuesta', ({ userId, online, lastSeen }) => {
+  if (online) {
+    console.log(`${userId} está en línea`);
+  } else {
+    console.log(`Última vez visto: ${lastSeen}`);
+  }
+});
+```
+
+---
+
+## Messaging events
+
+| Event | Direction | Payload | Description |
+|---|---|---|---|
+| `mensaje:enviar` | client → server | `{ paraId: string, content: string }` | Send a text (or image URL) message to a matched user |
+| `mensaje:nuevo` | server → sender + recipient | Message object + `senderName` + `senderPhoto` | New message broadcast to both participants |
+| `mensajes:leer` | client → server | `{ deId: string }` | Mark all messages received from `deId` as read |
+| `cita:sugerencia` | server → both match users | Date suggestion payload | Emitted automatically after the 5th message in a match |
+| `cita:nueva-sugerencia` | server → both match users | Date suggestion payload | Emitted when a new venue is proposed via `POST /api/matches/:id/suggest-new-place` |
+| `cita:estado-actualizado` | server → partner | `{ matchId, aceptoPor, recomendacion }` | Emitted when one user accepts a date suggestion |
+| `cita:confirmada` | server → restaurant partner | `{ matchId, pareja[], restaurante, fechaSugerida }` | Emitted to the restaurant's associated account when both users accept |
+
+### `mensaje:enviar` payload
+
+<ParamField body="paraId" type="string" required>
+  The `_id` of the user you want to message. Both users must have a mutual match or the server responds with an `error` event.
+</ParamField>
+
+<ParamField body="content" type="string" required>
+  Message text content, or a Cloudinary URL for an image message. Whitespace is trimmed server-side.
+</ParamField>
+
+### `mensaje:nuevo` payload
+
+```typescript
+{
+  id:          string;       // Message ID
+  matchId:     string;       // Match document ID
+  sender_id:   string;       // Sender's user ID
+  receiver_id: string;       // Recipient's user ID
+  content:     string;       // Message text or image URL
+  is_read:     boolean;      // Always false on initial delivery
+  created_at:  string;       // ISO 8601 timestamp
+  senderName:  string;       // Sender's first_name or username
+  senderPhoto: string | null; // Sender's profile photo URL
+}
+```
+
+### `cita:sugerencia` payload
+
+```typescript
+{
+  matchId: string;
+  restaurante: {
+    id:             string;
+    nombre:         string;
+    descripcion:    string;
+    categoria:      string;
+    ambiente:       string;
+    direccion:      string;
+    foto_portada:   { url: string; public_id: string } | null;
+    fotos:          Array<{ url: string; public_id: string }>; // up to 5
+    precio_promedio: string;  // "$" | "$$" | "$$$" | "$$$$"
+    horario:        string;
+    menu:           Array<{   // up to 3 featured dishes
+      nombre:      string;
+      descripcion: string;
+      precio:      string;
+      foto?:       { url: string } | null;
+    }>;
+  };
+  sugerencia: {
+    fecha:    string;          // e.g. "Sábado 8:00 PM"
+    mensaje?: string;          // e.g. "¡Ana y Carlos se la llevan muy bien! 💕"
+  };
+  recomendacion: {
+    restauranteId: string;
+    asociadoId:    string;
+    estado:        'pendiente' | 'aceptada' | 'rechazada';
+    user1Acepta:   boolean;
+    user2Acepta:   boolean;
+    fechaSugerida: string;
+  };
+}
+```
+
+### Example — send a message and listen for delivery
+
+```typescript
+// Send
+socket.emit('mensaje:enviar', {
+  paraId:  '64f1a2b3c4d5e6f7a8b9c0d1',
+  content: '¡Hola! ¿Cómo estás?',
+});
+
+// Receive (fires for both sender and recipient)
+socket.on('mensaje:nuevo', (message) => {
+  console.log(`${message.senderName}: ${message.content}`);
+  // Add to local messages array, deduplicating by message.id
+});
+```
+
+---
+
+## Call events
+
+Debuta uses WebRTC for peer-to-peer audio and video calls, with Socket.io as the signalling channel. The call flow exchanges SDP offers/answers and ICE candidates through these events.
+
+| Event | Direction | Payload | Description |
+|---|---|---|---|
+| `call:request` | client → server | `{ paraId, signalData, isVideo, callerName, callerPhoto }` | Initiate a call; server validates mutual match before forwarding |
+| `call:incoming` | server → callee | `{ fromId, signalData, isVideo, callerName, callerPhoto }` | Forwarded to the callee; `signalData` is the SDP offer |
+| `call:waiting` | server → caller | `{ paraId, reason: 'offline' }` | Callee's socket room is empty; call stored as pending |
+| `call:unavailable` | server → caller | `{ paraId, reason: string }` | Call rejected server-side (no mutual match: `reason: 'no_match'`) |
+| `call:accept` | client → server | `{ paraId, signalData }` | Callee accepts; `signalData` is the SDP answer |
+| `call:accepted` | server → caller | `{ signalData, answererId }` | Forwarded SDP answer to the original caller |
+| `call:reject` | client → server | `{ paraId }` | Callee declines the call |
+| `call:rejected` | server → caller | `{ fromId }` | Notifies the caller that the call was declined |
+| `call:signal` | client → server | `{ paraId, signalData }` | Relay ICE candidates or renegotiation signals |
+| `call:signal` | server → peer | `{ fromId, signalData }` | Forwarded ICE/signal to the other peer |
+| `call:end` | client → server | `{ paraId }` | Hang up an active or pending call |
+| `call:ended` | server → peer | `{ fromId }` | Notifies the peer that the call was ended |
+| `call:audio-chunk` | client → server | `{ paraId, audioData, chunkIndex }` | Audio relay fallback for environments without native WebRTC |
+| `call:audio-chunk` | server → recipient | `{ fromId, audioData, chunkIndex }` | Forwarded audio chunk to the recipient |
+| `call:cancel_pending` | client → server | `{ paraId }` | Cancel a stored pending call before the callee reconnects |
+
+### Call flow (happy path)
+
+<Steps>
+  <Step title="Caller emits call:request">
+    The caller creates an SDP offer via WebRTC and emits it as `signalData`. The server checks for a mutual match; if none exists, it emits `call:unavailable` back to the caller.
+  </Step>
+  <Step title="Server forwards to callee or stores as pending">
+    If the callee's socket room has active connections, the server emits `call:incoming` immediately. If the room is empty (callee is offline), the call is stored in memory and `call:waiting` is sent to the caller.
+  </Step>
+  <Step title="Callee receives call:incoming">
+    The callee's app shows an incoming call UI, plays the ringtone, and waits for user action.
+  </Step>
+  <Step title="Callee emits call:accept">
+    On acceptance, the callee creates an SDP answer and emits it as `signalData` in `call:accept`.
+  </Step>
+  <Step title="Server forwards call:accepted to caller">
+    The caller receives the SDP answer and sets it as the remote description.
+  </Step>
+  <Step title="ICE candidate exchange via call:signal">
+    Both peers exchange ICE candidates through `call:signal` until a working connection path is established.
+  </Step>
+  <Step title="Either party emits call:end to hang up">
+    The peer receives `call:ended` and tears down the WebRTC connection.
+  </Step>
+</Steps>
+
+### Example — initiate and accept a call
+
+```typescript
+// ── Caller side ───────────────────────────────────────────────────────
+const offer = await peerConnection.createOffer();
+await peerConnection.setLocalDescription(offer);
+
+socket.emit('call:request', {
+  paraId:      '64f1a2b3c4d5e6f7a8b9c0d1',
+  signalData:  offer,           // RTCSessionDescription { type: 'offer', sdp: '...' }
+  isVideo:     false,
+  callerName:  'Carlos',
+  callerPhoto: 'https://...',
+});
+
+socket.on('call:waiting', ({ paraId, reason }) => {
+  // Callee is offline; call stored for up to 60 seconds
+  console.log('Esperando que el receptor se conecte...');
+});
+
+socket.on('call:accepted', async ({ signalData, answererId }) => {
+  await peerConnection.setRemoteDescription(signalData);
+  // Audio/video should now flow
+});
+
+// ── Callee side ───────────────────────────────────────────────────────
+socket.on('call:incoming', async ({ fromId, signalData, isVideo, callerName }) => {
+  // Show incoming call UI to the user
+  // On user accept:
+  await peerConnection.setRemoteDescription(signalData);
+  const answer = await peerConnection.createAnswer();
+  await peerConnection.setLocalDescription(answer);
+
+  socket.emit('call:accept', {
+    paraId:     fromId,
+    signalData: answer,         // RTCSessionDescription { type: 'answer', sdp: '...' }
+  });
+});
+
+// ── ICE candidate relay (both sides) ─────────────────────────────────
+peerConnection.onicecandidate = (event) => {
+  if (event.candidate) {
+    socket.emit('call:signal', {
+      paraId:     remoteUserId,
+      signalData: { type: 'ice', candidate: event.candidate.toJSON() },
+    });
+  }
+};
+
+socket.on('call:signal', async ({ signalData }) => {
+  if (signalData.type === 'ice' && signalData.candidate) {
+    await peerConnection.addIceCandidate(signalData.candidate);
+  }
+});
+
+// ── Hang up ───────────────────────────────────────────────────────────
+socket.emit('call:end', { paraId: remoteUserId });
+socket.on('call:ended', ({ fromId }) => {
+  peerConnection.close();
+});
+```
+
+---
+
+## Using the socket from the React Native app
+
+The mobile app wraps the socket connection in a context provider. Use the `useSocket()` hook to access the shared socket instance:
+
+```typescript
+import { useSocket } from '../context/SocketContext';
+
+export default function ChatScreen({ matchedUserId }: { matchedUserId: string }) {
+  const { socket, connected } = useSocket();
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const onMessage = (msg: any) => {
+      // Handle incoming message
+    };
+
+    socket.on('mensaje:nuevo', onMessage);
+
+    return () => {
+      socket.off('mensaje:nuevo', onMessage);
+    };
+  }, [socket]);
+
+  const sendMessage = (content: string) => {
+    if (socket?.connected) {
+      socket.emit('mensaje:enviar', { paraId: matchedUserId, content });
+    }
+  };
+
+  return (/* ... */);
+}
+```
+
+The `SocketProvider` in `SocketContext.tsx` manages the connection lifecycle automatically:
+
+- Reads `access_token`, `user_name`, and `user_photo` from `AsyncStorage` on mount.
+- Reconnects when the app returns to the foreground (`AppState` listener).
+- Polls every 3 seconds until a token is available (handles the case where the socket mounts before login completes).
+- Re-exposes a `reconnect()` function for forcing a fresh connection after login or logout.
+
+For call management, use the `useCall()` hook from `CallContext.tsx`, which wraps `useWebRTC` and handles the full incoming/outgoing call lifecycle including SDP negotiation, ringtone playback, and navigation to the call screen.
+
+---
+
+<Note>
+  Pending calls have a **60-second TTL**. If a caller initiates a call while the callee
+  is offline, the server stores the call data in memory. When the callee reconnects
+  within 60 seconds, `call:incoming` is delivered immediately on connection. If more
+  than 60 seconds pass before reconnection, the pending call is discarded and never
+  delivered. The caller can also cancel a pending call early by emitting
+  `call:cancel_pending`.
+</Note>
+
+<Warning>
+  WebRTC (`react-native-webrtc`) does not function in **Expo Go**. A stub
+  implementation is active in that environment — calls appear to work superficially but
+  no real audio or video is transmitted. Run `npx expo run:android` or
+  `npx expo run:ios` for a native build that supports full WebRTC.
+</Warning>

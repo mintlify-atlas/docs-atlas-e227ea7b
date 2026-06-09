@@ -1,0 +1,169 @@
+{
+  "projectType": "saas",
+  "projectName": "Debuta",
+  "projectDescription": "A full-stack dating and social app built with React Native (Expo) and Node.js, featuring swipe-based discovery, real-time chat, video/audio calls, facial verification, restaurant date suggestions, and a web-based admin panel.",
+  "theme": "palm",
+  "primaryColor": "#FD297B",
+  "lightColor": "#FF655B",
+  "darkColor": "#8B5CF6",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Mobile App",
+            "pages": [
+              "mobile/setup",
+              "mobile/screens",
+              "mobile/real-time",
+              "mobile/theming"
+            ]
+          },
+          {
+            "group": "Backend",
+            "pages": [
+              "backend/setup",
+              "backend/authentication",
+              "backend/configuration"
+            ]
+          },
+          {
+            "group": "Admin Panel",
+            "pages": [
+              "admin/overview",
+              "admin/users",
+              "admin/reports"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/backend",
+              "deployment/mobile"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": [
+              "api/auth",
+              "api/social-auth",
+              "api/password-reset"
+            ]
+          },
+          {
+            "group": "Users & Profiles",
+            "pages": [
+              "api/users",
+              "api/settings"
+            ]
+          },
+          {
+            "group": "Discovery & Matching",
+            "pages": [
+              "api/discover",
+              "api/matches",
+              "api/likes"
+            ]
+          },
+          {
+            "group": "Chat & Calls",
+            "pages": [
+              "api/chat",
+              "api/socket-events"
+            ]
+          },
+          {
+            "group": "Content & Safety",
+            "pages": [
+              "api/posts",
+              "api/reports",
+              "api/facial"
+            ]
+          },
+          {
+            "group": "Partners & Support",
+            "pages": [
+              "api/partners",
+              "api/support"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Swipe-based user discovery with filters (distance, age, gender, interests)",
+    "Real-time messaging over Socket.io with read receipts",
+    "WebRTC-powered audio and video calls between matched users",
+    "Facial recognition verification using live camera capture",
+    "Automated restaurant date suggestions after 5 messages",
+    "Social login via Google and Facebook OAuth",
+    "Partner (restaurant/business) portal with menu and booking management",
+    "Web-based admin panel with user management, analytics, and moderation tools",
+    "Dual light/dark theme support with branded color tokens",
+    "Expo-based cross-platform mobile app (iOS + Android)"
+  ],
+  "publicApiSurface": [
+    "POST /api/login",
+    "GET /api/me",
+    "POST /api/users/register",
+    "GET /api/users/discover",
+    "GET /api/users/:id",
+    "PUT /api/users/profile",
+    "POST /api/users/profile/avatar",
+    "GET /api/matches",
+    "POST /api/matches/like/:targetId",
+    "POST /api/matches/dislike/:targetId",
+    "POST /api/matches/:id/accept-date",
+    "POST /api/matches/:id/suggest-new-place",
+    "GET /api/chat/:userId",
+    "POST /api/chat/:userId",
+    "POST /api/chat/upload",
+    "GET /api/likes",
+    "POST /api/posts",
+    "GET /api/posts/me",
+    "POST /api/posts/:id/like",
+    "DELETE /api/posts/:id",
+    "POST /api/report/:userId",
+    "POST /api/facial/verify",
+    "POST /api/facial/register",
+    "POST /api/facial/login-verify",
+    "POST /api/auth/google",
+    "POST /api/auth/facebook",
+    "POST /api/password/forgot",
+    "POST /api/password/verify",
+    "POST /api/password/reset",
+    "GET /api/settings",
+    "PUT /api/settings",
+    "PUT /api/settings/password",
+    "POST /api/soporte",
+    "GET /api/soporte/mis-tickets",
+    "GET /api/asociado/restaurante",
+    "PUT /api/asociado/restaurante",
+    "GET /api/asociado/citas",
+    "Socket event: mensaje:enviar",
+    "Socket event: mensaje:nuevo",
+    "Socket event: mensajes:leer",
+    "Socket event: call:request",
+    "Socket event: call:incoming",
+    "Socket event: call:accept",
+    "Socket event: call:reject",
+    "Socket event: call:end",
+    "Socket event: presencia:estado",
+    "Socket event: cita:sugerencia"
+  ]
+}

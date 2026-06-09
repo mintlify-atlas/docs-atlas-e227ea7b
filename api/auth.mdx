@@ -1,0 +1,331 @@
+---
+title: "Authentication API — Login and Token Retrieval"
+sidebarTitle: "Auth"
+description: "POST /api/login to authenticate a local user and receive a JWT access token. GET /api/me to retrieve the current authenticated user's profile."
+---
+
+Debuta uses **JSON Web Tokens (JWT)** for session management. Local (email + password) accounts authenticate through `POST /api/login`, which returns a signed token valid for 7 days. Every subsequent request to a protected route must include that token in the `Authorization` header. Use `GET /api/me` at any time to exchange a valid token for the full user profile — it's the canonical way to rehydrate a session on app launch.
+
+<Note>
+  Social sign-in (Google, Facebook) uses a separate flow. See [Social Auth](/api/social-auth) for those endpoints. Accounts created via Google or Facebook **cannot** authenticate through `POST /api/login`.
+</Note>
+
+---
+
+## POST /api/login
+
+Authenticates a user with their email address and password, returning a JWT access token and the serialized user object.
+
+**Auth required:** No
+
+### Request body
+
+```json
+{
+  "correo": "ana@example.com",
+  "password": "mySecurePass123"
+}
+```
+
+<ParamField body="correo" type="string" required>
+  The user's registered email address. Case-insensitive.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The user's plaintext password. Minimum 6 characters. Compared against the bcrypt hash stored in the database.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "usuario": {
+    "id": "665f1a2b3c4d5e6f78901234",
+    "username": "ana_garcia1042",
+    "first_name": "Ana",
+    "last_name": "García",
+    "correo": "ana@example.com",
+    "gender": "femenino",
+    "birth_date": "1998-04-12T00:00:00.000Z",
+    "bio": "Amante del café y los viajes ✈️",
+    "profile_picture": {
+      "url": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/abc123.jpg",
+      "public_id": "profiles/abc123"
+    },
+    "photos": [],
+    "interests": [
+      { "name": "Senderismo", "icon": "🥾" }
+    ],
+    "is_verified": true,
+    "rol": "user",
+    "activo": true,
+    "settings": { "max_distance": 50, "show_me": "ALL" }
+  }
+}
+```
+
+<ResponseField name="access_token" type="string">
+  Signed JWT. Valid for 7 days (controlled by the `JWT_EXPIRES_IN` environment variable). Pass this in every authenticated request as `Authorization: Bearer <token>`.
+</ResponseField>
+
+<ResponseField name="usuario" type="object">
+  The authenticated user's serialized profile. See [UserObject fields](#userobject-fields) below.
+</ResponseField>
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `correo` or `password` missing from the request body |
+| `401`  | Wrong email or password |
+| `401`  | Account was created with Google or Facebook — use social auth |
+| `401`  | Account is deactivated (`activo: false`) |
+| `500`  | Internal server error |
+
+### curl example
+
+```bash
+curl -X POST https://api.debuta.app/api/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "correo": "ana@example.com",
+    "password": "mySecurePass123"
+  }'
+```
+
+---
+
+## GET /api/me
+
+Returns the full profile of the currently authenticated user. The mobile app calls this endpoint on startup to restore the session from a stored token.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Response — 200 OK
+
+```json
+{
+  "usuario": {
+    "id": "665f1a2b3c4d5e6f78901234",
+    "username": "ana_garcia1042",
+    "first_name": "Ana",
+    "last_name": "García",
+    "correo": "ana@example.com",
+    "gender": "femenino",
+    "birth_date": "1998-04-12T00:00:00.000Z",
+    "bio": "Amante del café y los viajes ✈️",
+    "profile_picture": {
+      "url": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/abc123.jpg",
+      "public_id": "profiles/abc123"
+    },
+    "cover_photo": null,
+    "photos": [],
+    "interests": [
+      { "name": "Senderismo", "icon": "🥾" }
+    ],
+    "is_verified": true,
+    "needs_profile_completion": false,
+    "rol": "user",
+    "activo": true,
+    "ciudad": "Ciudad de México",
+    "pais": "México",
+    "location_label": "CDMX, México",
+    "job_title": "Diseñadora UX",
+    "company": "Startup Lab",
+    "education": "UNAM",
+    "buscando": "citas",
+    "settings": {
+      "max_distance": 50,
+      "min_age": 18,
+      "max_age": 40,
+      "show_me": "ALL",
+      "notif_matches": true,
+      "notif_messages": true,
+      "profile_visible": true
+    },
+    "createdAt": "2024-06-04T10:22:41.000Z",
+    "updatedAt": "2024-11-15T08:14:09.000Z"
+  }
+}
+```
+
+<ResponseField name="usuario" type="object">
+  The full user profile. See [UserObject fields](#userobject-fields) below.
+</ResponseField>
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing, malformed, or expired JWT |
+| `500`  | Internal server error |
+
+### curl example
+
+```bash
+curl https://api.debuta.app/api/me \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## UserObject fields
+
+The `usuario` object returned by both endpoints is produced by `serializarUsuario()`. It strips `password` and `__v`, and always includes a top-level `id` string alongside Mongoose's `_id`.
+
+<ResponseField name="id" type="string">
+  MongoDB ObjectId as a string. Canonical user identifier.
+</ResponseField>
+
+<ResponseField name="username" type="string">
+  Unique, lowercase handle. Auto-generated at registration from the user's first name plus a 4-digit suffix (e.g. `ana_garcia1042`).
+</ResponseField>
+
+<ResponseField name="first_name" type="string">
+  User's first name.
+</ResponseField>
+
+<ResponseField name="last_name" type="string">
+  User's last name. May be an empty string for social auth accounts that didn't provide it.
+</ResponseField>
+
+<ResponseField name="correo" type="string">
+  Email address. Always lowercase.
+</ResponseField>
+
+<ResponseField name="gender" type="string">
+  One of: `masculino`, `femenino`, `no_binario`, `otro`, `prefiero_no_decir`.
+</ResponseField>
+
+<ResponseField name="birth_date" type="string (ISO 8601)">
+  Date of birth. Use the virtual `age` field for a pre-computed integer age.
+</ResponseField>
+
+<ResponseField name="age" type="number">
+  Virtual field. Computed integer age in years from `birth_date`.
+</ResponseField>
+
+<ResponseField name="bio" type="string">
+  Free-text profile bio. Max 500 characters.
+</ResponseField>
+
+<ResponseField name="profile_picture" type="object | null">
+  Main profile photo from Cloudinary: `{ url: string, public_id: string }`.
+</ResponseField>
+
+<ResponseField name="cover_photo" type="object | null">
+  Cover / banner photo from Cloudinary: `{ url: string, public_id: string }`.
+</ResponseField>
+
+<ResponseField name="photos" type="array">
+  Gallery of up to 6 additional photos. Each item: `{ url: string, public_id: string }`.
+</ResponseField>
+
+<ResponseField name="interests" type="array">
+  Array of interest objects: `{ name: string, icon: string }`.
+</ResponseField>
+
+<ResponseField name="is_verified" type="boolean">
+  `true` if the account has been verified (facial photo submitted or OAuth provider verified the email).
+</ResponseField>
+
+<ResponseField name="needs_profile_completion" type="boolean">
+  `true` for newly created OAuth accounts that haven't set `gender` or `birth_date` yet. The app should redirect these users to a profile completion screen.
+</ResponseField>
+
+<ResponseField name="rol" type="string">
+  Account role: `user`, `admin`, or `asociado`.
+</ResponseField>
+
+<ResponseField name="activo" type="boolean">
+  `false` means the account has been deactivated and cannot log in.
+</ResponseField>
+
+<ResponseField name="job_title" type="string">
+  Job title (e.g. `"Diseñadora UX"`). Max 100 characters.
+</ResponseField>
+
+<ResponseField name="company" type="string">
+  Employer name. Max 100 characters.
+</ResponseField>
+
+<ResponseField name="education" type="string">
+  Educational institution. Max 150 characters.
+</ResponseField>
+
+<ResponseField name="relationship_status" type="string">
+  One of: `single`, `in_relationship`, `married`, `complicated`, `prefer_not_say`, or empty string.
+</ResponseField>
+
+<ResponseField name="website" type="string">
+  Personal website URL. Max 200 characters.
+</ResponseField>
+
+<ResponseField name="buscando" type="string">
+  What the user is looking for: `amistad`, `citas`, `serio`, `casual`, `no_lo_se`, or empty string.
+</ResponseField>
+
+<ResponseField name="religion" type="string">
+  User's religion. Free-text.
+</ResponseField>
+
+<ResponseField name="zodiac" type="string">
+  Zodiac sign. Free-text.
+</ResponseField>
+
+<ResponseField name="smoke" type="string">
+  Smoking habit: `si`, `no`, `socialmente`, `ocasionalmente`, or empty string.
+</ResponseField>
+
+<ResponseField name="drink" type="string">
+  Drinking habit: `si`, `no`, `socialmente`, `ocasionalmente`, or empty string.
+</ResponseField>
+
+<ResponseField name="languages" type="array">
+  Array of language strings (e.g. `["Español", "Inglés"]`).
+</ResponseField>
+
+<ResponseField name="height" type="number | null">
+  Height in centimetres.
+</ResponseField>
+
+<ResponseField name="exercise" type="string">
+  Exercise frequency: `siempre`, `a_veces`, `nunca`, or empty string.
+</ResponseField>
+
+<ResponseField name="ciudad" type="string">
+  City name (e.g. `"Ciudad de México"`).
+</ResponseField>
+
+<ResponseField name="pais" type="string">
+  Country name (e.g. `"México"`).
+</ResponseField>
+
+<ResponseField name="location_label" type="string">
+  Human-readable location label (e.g. `"CDMX, México"`).
+</ResponseField>
+
+<ResponseField name="latitude" type="number | null">
+  GPS latitude. Used for distance-based discovery.
+</ResponseField>
+
+<ResponseField name="longitude" type="number | null">
+  GPS longitude.
+</ResponseField>
+
+<ResponseField name="auth_provider" type="string">
+  Authentication method: `local`, `google`, or `facebook`.
+</ResponseField>
+
+<ResponseField name="settings" type="object">
+  User's discovery and privacy preferences. See [Settings API](/api/settings) for the full schema.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string (ISO 8601)">
+  Account creation timestamp.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string (ISO 8601)">
+  Last update timestamp.
+</ResponseField>

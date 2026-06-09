@@ -1,0 +1,172 @@
+---
+title: "Managing Users in the Debuta Admin Panel"
+sidebarTitle: "Users"
+description: "How to list, search, view profiles, change roles, toggle account status, and permanently delete users from the Debuta admin panel."
+---
+
+The Users section of the admin panel gives you full control over every account on the platform. You can browse the entire user base, narrow results with search and filters, inspect individual profiles in detail, and take moderation actions without leaving the browser.
+
+## User List View
+
+The user table is paginated at **20 rows per page** and supports three simultaneous filters:
+
+| Filter | Values |
+|---|---|
+| **Search** | Free-text match against `first_name`, `last_name`, `username`, or `correo` (case-insensitive) |
+| **Role** | `user`, `admin`, or `asociado` |
+| **Status** | Active or inactive |
+
+Each row displays the user's avatar, full name, `@username`, email address, role badge, account status, real-time online indicator, and registration date. The online status is resolved at query time from the Socket.IO in-memory map — no database write is required.
+
+### API: List Users
+
+```http
+GET /api/admin/users?page=1&limit=20&search=&rol=&activo=
+Authorization: Bearer <admin-token>
+```
+
+**Response:**
+
+```json
+{
+  "usuarios": [...],
+  "total": 312,
+  "page": 1,
+  "pages": 16
+}
+```
+
+## User Detail View
+
+Click **Ver** on any row to open a modal with the user's full profile. The modal fetches data from a dedicated endpoint that also returns activity statistics.
+
+### API: Single User Detail
+
+```http
+GET /api/admin/users/:id
+Authorization: Bearer <admin-token>
+```
+
+**Response:**
+
+```json
+{
+  "usuario": {
+    "_id": "...",
+    "first_name": "María",
+    "last_name": "López",
+    "username": "marialopez",
+    "correo": "maria@example.com",
+    "rol": "user",
+    "activo": true,
+    "is_verified": true,
+    "gender": "Mujer",
+    "ciudad": "Guadalajara",
+    "pais": "México",
+    "auth_provider": "google",
+    "telefono": "+52...",
+    "bio": "...",
+    "online": false,
+    "createdAt": "2024-09-15T10:23:00.000Z"
+  },
+  "stats": {
+    "totalMatches": 12,
+    "totalMensajes": 340,
+    "totalReportes": 0
+  }
+}
+```
+
+The `stats` object shows total matches the user has formed, total messages sent or received, and how many times they have been reported by others.
+
+## User Actions
+
+### Change Role
+
+Promote or demote an account between the three available roles. The role selector is available inside the user detail modal.
+
+```http
+PUT /api/admin/users/:id/role
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "rol": "asociado"
+}
+```
+
+Valid values for `rol` are `"user"`, `"admin"`, and `"asociado"`. Any other value returns `400 Bad Request`.
+
+### Toggle Account Status (Ban / Unban)
+
+Deactivating an account sets `activo: false` on the user document. The user can no longer log in or be matched. The toggle is reversible — calling the endpoint again re-activates the account.
+
+```http
+PUT /api/admin/users/:id/toggle
+Authorization: Bearer <admin-token>
+```
+
+**Response:**
+
+```json
+{
+  "message": "Cuenta desactivada correctamente",
+  "activo": false
+}
+```
+
+<Warning>
+  Deactivating an admin account while you are logged in as that same account will lock you out of the panel on the next request. Always maintain at least one active admin account separate from your own.
+</Warning>
+
+### Delete User (Permanent)
+
+Permanently removes the account and cascades the deletion to all associated data.
+
+```http
+DELETE /api/admin/users/:id
+Authorization: Bearer <admin-token>
+```
+
+The controller deletes the following documents in parallel before removing the user:
+
+- All `Match` documents that reference the user's ID
+- All `Mensaje` documents where the user is sender or receiver
+- All `Reporte` documents where the user is the reporter or the reported party
+
+<Warning>
+  Deletion is irreversible. There is no soft-delete or recovery mechanism. The confirmation dialog in the UI must be acknowledged before the request is sent.
+</Warning>
+
+## Online Users
+
+The top bar of the panel displays a live count of connected users. This count is sourced from `GET /api/admin/online`, which reads directly from the Socket.IO in-memory map of active socket connections.
+
+```http
+GET /api/admin/online
+Authorization: Bearer <admin-token>
+```
+
+**Response:**
+
+```json
+{
+  "count": 14,
+  "userIds": ["64a1...", "64b2...", "..."]
+}
+```
+
+<Note>
+  The online count in the Dashboard KPI cards is also refreshed every 30 seconds via `GET /api/admin/stats`, which includes the `usuariosOnline` field derived from the same socket map.
+</Note>
+
+## API Endpoint Reference
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/admin/users` | Paginated user list with optional `search`, `rol`, `activo` query params |
+| `GET` | `/api/admin/users/:id` | Full profile and activity stats for one user |
+| `PUT` | `/api/admin/users/:id/role` | Change role — body: `{ "rol": "user" \| "admin" \| "asociado" }` |
+| `PUT` | `/api/admin/users/:id/toggle` | Flip `activo` flag |
+| `DELETE` | `/api/admin/users/:id` | Permanently delete user and all related data |
+| `GET` | `/api/admin/online` | Currently connected socket user IDs and count |

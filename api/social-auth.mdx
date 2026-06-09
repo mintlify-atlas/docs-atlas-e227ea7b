@@ -1,0 +1,326 @@
+---
+title: "Social Authentication: Google and Facebook OAuth"
+sidebarTitle: "Social Auth"
+description: "Authenticate Debuta users with Google or Facebook OAuth. POST /api/auth/google or /api/auth/facebook to exchange an OAuth token for a Debuta JWT."
+---
+
+Debuta supports OAuth sign-in via Google and Facebook. Both flows follow the same pattern: the mobile app completes the OAuth handshake natively using **`expo-auth-session`**, receives a provider token, and exchanges it with the Debuta backend for a signed JWT. The backend verifies the token directly with the provider (Google's `OAuth2Client` or Facebook's Graph API), then creates or updates the user record before returning the Debuta session token.
+
+<Note>
+  The mobile app handles the OAuth redirect entirely on-device using `expo-auth-session`. The backend endpoints documented here accept only the resulting **provider token** — they do not perform any redirects themselves.
+</Note>
+
+---
+
+## POST /api/auth/google
+
+Verifies a Google ID token, then finds or creates a Debuta user. The Google token is verified against `GOOGLE_CLIENT_ID` using the `google-auth-library` `OAuth2Client`. If the email already exists in the database with a different provider, the Google identity is linked to that account.
+
+**Auth required:** No
+
+### Request body
+
+```json
+{
+  "idToken": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2..."
+}
+```
+
+<ParamField body="idToken" type="string" required>
+  The Google ID token returned by `expo-auth-session` / Google Sign-In on the mobile client. This is verified server-side with Google's public keys.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "usuario": {
+    "id": "665f1a2b3c4d5e6f78901234",
+    "username": "ana4821",
+    "first_name": "Ana",
+    "last_name": "García",
+    "correo": "ana@gmail.com",
+    "auth_provider": "google",
+    "is_verified": true,
+    "needs_profile_completion": true,
+    "profile_picture": {
+      "url": "https://lh3.googleusercontent.com/a/ACg8oc...",
+      "public_id": "google_118204..."
+    }
+  }
+}
+```
+
+<ResponseField name="access_token" type="string">
+  Signed Debuta JWT, valid for 7 days.
+</ResponseField>
+
+<ResponseField name="usuario" type="object">
+  Serialized user profile. See [UserObject fields](/api/auth#userobject-fields).
+</ResponseField>
+
+<ResponseField name="usuario.needs_profile_completion" type="boolean">
+  Present and `true` when the account was **just created** and the user has not yet set a real `gender` or `birth_date`. The app should navigate these users to a profile-completion screen before showing the main feed.
+</ResponseField>
+
+### New-user creation details
+
+When no existing account matches the Google `sub` (ID) or email, the backend automatically creates an account with:
+
+- `auth_provider: 'google'`, `googleId` set to the Google `sub`
+- `username` generated from the user's given name plus a random 4-digit suffix
+- `profile_picture` set from the Google account photo (if available)
+- `is_verified: true` (Google-verified email)
+- `needs_profile_completion: true`
+- `gender: 'prefiero_no_decir'` and `birth_date: 2000-01-01` as placeholders until the user fills in their profile
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `idToken` missing from request body |
+| `401`  | Token verification failed with Google / invalid token |
+| `401`  | Account is deactivated |
+
+### curl example
+
+```bash
+curl -X POST https://api.debuta.app/api/auth/google \
+  -H "Content-Type: application/json" \
+  -d '{
+    "idToken": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2..."
+  }'
+```
+
+---
+
+## POST /api/auth/facebook
+
+Verifies a Facebook user access token via the Graph API `debug_token` endpoint, fetches the user's profile, and finds or creates a Debuta account. If the email is already registered under a different provider, the Facebook identity is linked.
+
+**Auth required:** No
+
+### Request body
+
+```json
+{
+  "accessToken": "EAAGm0PX4ZC...",
+  "userID": "118204567890123"
+}
+```
+
+<ParamField body="accessToken" type="string" required>
+  The Facebook user access token from `expo-auth-session` / Facebook Login SDK.
+</ParamField>
+
+<ParamField body="userID" type="string" required>
+  The Facebook user ID (`id` field from the Graph API). Used to fetch the user's profile data from `graph.facebook.com/{userID}`.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "usuario": {
+    "id": "665f1b3c4d5e6f789012ab",
+    "username": "carlos8813",
+    "first_name": "Carlos",
+    "last_name": "Méndez",
+    "correo": "carlos@facebook.com",
+    "auth_provider": "facebook",
+    "is_verified": true,
+    "needs_profile_completion": true,
+    "profile_picture": {
+      "url": "https://platform-lookaside.fbsbx.com/platform/profilepic/...",
+      "public_id": "fb_118204567890123"
+    }
+  }
+}
+```
+
+<ResponseField name="access_token" type="string">
+  Signed Debuta JWT, valid for 7 days.
+</ResponseField>
+
+<ResponseField name="usuario" type="object">
+  Serialized user profile. See [UserObject fields](/api/auth#userobject-fields).
+</ResponseField>
+
+<ResponseField name="usuario.needs_profile_completion" type="boolean">
+  `true` for newly created Facebook accounts that still need gender and birth date.
+</ResponseField>
+
+### New-user creation details
+
+When no existing account matches the Facebook `id` or email, the backend creates an account with:
+
+- `auth_provider: 'facebook'`, `facebookId` set
+- Email: the Facebook account email, or `fb_<facebookId>@debuta.app` as a fallback if Facebook doesn't provide one
+- `profile_picture` set from the Facebook large profile picture (if available)
+- `is_verified: true`, `needs_profile_completion: true`
+- Placeholder `gender` and `birth_date` until the user completes the profile
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `accessToken` missing from request body |
+| `401`  | `debug_token` validation failed — token is not valid |
+| `401`  | Account is deactivated |
+| `500`  | Error communicating with the Facebook Graph API |
+
+### curl example
+
+```bash
+curl -X POST https://api.debuta.app/api/auth/facebook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accessToken": "EAAGm0PX4ZC...",
+    "userID": "118204567890123"
+  }'
+```
+
+---
+
+## POST /api/auth/social/friends
+
+Stores a list of the authenticated user's Facebook friend IDs so that the discovery algorithm can surface mutual connections. The IDs are stored in the `social_friend_ids` array on the user document and are never exposed to other users directly.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Request body
+
+```json
+{
+  "friendIds": ["118204567890123", "229305678901234", "330406789012345"]
+}
+```
+
+<ParamField body="friendIds" type="string[]" required>
+  Array of Facebook user IDs for the current user's friends. Send the full list each time — the call replaces the previous value with `$set`.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Amigos sincronizados",
+  "count": 3
+}
+```
+
+<ResponseField name="message" type="string">
+  Confirmation message.
+</ResponseField>
+
+<ResponseField name="count" type="number">
+  Number of friend IDs stored.
+</ResponseField>
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing or invalid JWT |
+| `500`  | Internal server error |
+
+### curl example
+
+```bash
+curl -X POST https://api.debuta.app/api/auth/social/friends \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "friendIds": ["118204567890123", "229305678901234"]
+  }'
+```
+
+---
+
+## GET /api/auth/common-connections/:userId
+
+Computes and returns a connection-strength score between the authenticated user and the target user. This is the same affinity algorithm used by the discovery feed. The response includes a breakdown of shared Facebook friends on Debuta, common interests, city match, and age proximity — plus a pre-formatted summary string ready to display in the UI.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Path parameters
+
+<ParamField path="userId" type="string" required>
+  MongoDB ObjectId of the target user to compare against.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "amigosFB": 2,
+  "interesesComun": ["Senderismo", "Fotografía"],
+  "ciudadComun": true,
+  "paisComun": true,
+  "edadSimilar": true,
+  "score": 13,
+  "resumen": "2 amigos en común · 2 intereses en común · misma ciudad"
+}
+```
+
+<ResponseField name="amigosFB" type="number">
+  Number of Facebook friend IDs that appear in both users' `social_friend_ids` arrays and are registered Debuta accounts.
+</ResponseField>
+
+<ResponseField name="interesesComun" type="string[]">
+  Array of interest names shared between both users.
+</ResponseField>
+
+<ResponseField name="ciudadComun" type="boolean">
+  `true` if both users have the same `ciudad` value (case-insensitive).
+</ResponseField>
+
+<ResponseField name="paisComun" type="boolean">
+  `true` if both users share the same `pais` value (case-insensitive).
+</ResponseField>
+
+<ResponseField name="edadSimilar" type="boolean">
+  `true` if the age difference between both users is 5 years or less.
+</ResponseField>
+
+<ResponseField name="score" type="number">
+  Composite affinity score. Scoring weights: `amigosFB × 3`, `interesesComun × 2`, `ciudadComun +2`, `paisComun +1`, `edadSimilar +1`.
+</ResponseField>
+
+<ResponseField name="resumen" type="string | null">
+  Human-readable summary for the UI (e.g. `"2 amigos en común · misma ciudad"`). `null` if no connections exist.
+</ResponseField>
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing or invalid JWT |
+| `404`  | Target user not found |
+| `500`  | Internal server error |
+
+### curl example
+
+```bash
+curl https://api.debuta.app/api/auth/common-connections/665f1b3c4d5e6f789012ab \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## OAuth flow overview
+
+<CardGroup cols={2}>
+  <Card title="Google Sign-In" icon="google">
+    The app calls `expo-auth-session` with `responseType: 'id_token'`. The resulting `idToken` is sent to `POST /api/auth/google` for server-side verification via `google-auth-library`.
+  </Card>
+  <Card title="Facebook Login" icon="facebook">
+    The app uses `expo-auth-session` with the Facebook provider. Both the `accessToken` and `userID` returned by the SDK are forwarded to `POST /api/auth/facebook`. The backend cross-checks the token with `graph.facebook.com/debug_token` before trusting it.
+  </Card>
+</CardGroup>
+
+<Warning>
+  Never forward a raw provider token to the client as proof of identity. The backend **always** re-validates the token with the provider before issuing a Debuta JWT. Sending an already-expired or tampered token returns `401`.
+</Warning>

@@ -1,0 +1,371 @@
+---
+title: "Matches API — Mutual Likes, Feed, and Date Coordination"
+sidebarTitle: "Matches"
+description: "Endpoints for liking and disliking users, listing mutual matches with message previews, and managing date suggestions: accept, reject, or propose a new venue."
+---
+
+A **match** in Debuta is created when two users have each liked the other. The Matches API covers the full lifecycle: sending likes and dislikes from the swipe feed, fetching the list of mutual matches for the chat inbox, and coordinating in-app date suggestions at a partner restaurant. Date suggestions themselves are triggered automatically by the server after 5 messages — not by a REST call — but this API lets users respond to them.
+
+---
+
+## Endpoints
+
+<CardGroup cols={2}>
+  <Card title="GET /api/matches" icon="list">
+    List all mutual matches with last message and unread count.
+  </Card>
+  <Card title="POST /api/matches/like/:targetId" icon="heart">
+    Like a user. Returns match status immediately.
+  </Card>
+  <Card title="POST /api/matches/dislike/:targetId" icon="x">
+    Dislike a user. Removes them from future discover results.
+  </Card>
+  <Card title="POST /api/matches/:id/accept-date" icon="calendar-check">
+    Accept the active restaurant date suggestion.
+  </Card>
+  <Card title="POST /api/matches/:id/reject-date" icon="calendar-xmark">
+    Reject the active date suggestion.
+  </Card>
+  <Card title="POST /api/matches/:id/suggest-new-place" icon="rotate">
+    Request a different restaurant for the date.
+  </Card>
+</CardGroup>
+
+All endpoints require authentication via `Authorization: Bearer <access_token>`.
+
+---
+
+## GET /api/matches
+
+Returns every mutual match for the authenticated user, sorted by most recent match date. Each item includes the matched user's profile, the last message in the conversation, and an unread message count.
+
+### Response `200 OK`
+
+```json
+{
+  "matches": [
+    {
+      "id": "64f1a2b3c4d5e6f7a8b9c0d2",
+      "matched_user": {
+        "id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "first_name": "Valentina",
+        "last_name": "Ríos",
+        "username": "valerios",
+        "profile_picture": {
+          "url": "https://res.cloudinary.com/debuta/image/upload/v1/profiles/val.jpg",
+          "public_id": "profiles/val"
+        },
+        "is_verified": true,
+        "birth_date": "1998-04-12T00:00:00.000Z"
+      },
+      "last_message": {
+        "id": "64f9aa11b2c3d4e5f6a7b8c9",
+        "sender_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "receiver_id": "64f0000000000000000000aa",
+        "content": "¡Hola! ¿Cómo estás?",
+        "is_read": true,
+        "created_at": "2024-07-15T21:05:33.000Z"
+      },
+      "unread_count": 0,
+      "total_mensajes": 4,
+      "created_at": "2024-07-14T18:22:11.000Z",
+      "recomendacion": null
+    }
+  ]
+}
+```
+
+<ResponseField name="matches" type="Match[]">
+  Array of mutual match objects.
+
+  <ResponseField name="id" type="string">
+    Match document ID.
+  </ResponseField>
+  <ResponseField name="matched_user" type="object">
+    Profile of the other user in this match.
+  </ResponseField>
+  <ResponseField name="last_message" type="object | null">
+    Most recent message in this conversation, or `null` if none yet.
+  </ResponseField>
+  <ResponseField name="unread_count" type="number">
+    Number of unread messages sent by the matched user to the current user.
+  </ResponseField>
+  <ResponseField name="total_mensajes" type="number">
+    Total messages exchanged in this match (used to determine date suggestion eligibility).
+  </ResponseField>
+  <ResponseField name="created_at" type="string">
+    ISO 8601 timestamp of when the mutual match was created.
+  </ResponseField>
+  <ResponseField name="recomendacion" type="object | null">
+    Active date suggestion object if one has been generated, otherwise `null`. See [date suggestion fields](#date-suggestion-object) below.
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```bash
+curl -X GET https://api.debuta.app/api/matches \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## POST /api/matches/like/:targetId
+
+Sends a like from the current user to `targetId`. If `targetId` has already liked the current user, a mutual match is created and both users receive a `match:nuevo` Socket.io event. If no mutual like exists yet, the target user receives a `like:recibido` Socket.io event instead.
+
+### Path parameters
+
+<ParamField path="targetId" type="string" required>
+  The MongoDB `_id` of the user to like.
+</ParamField>
+
+### Response `200 OK`
+
+```json
+{
+  "esMatch": true,
+  "matchId": "64f1a2b3c4d5e6f7a8b9c0d2",
+  "recomendacion": null,
+  "message": "🎉 ¡Es un match!"
+}
+```
+
+When no mutual like exists yet:
+
+```json
+{
+  "esMatch": false,
+  "matchId": "64f1a2b3c4d5e6f7a8b9c0d2",
+  "recomendacion": null,
+  "message": "Like enviado"
+}
+```
+
+<ResponseField name="esMatch" type="boolean">
+  `true` if this like created a mutual match.
+</ResponseField>
+<ResponseField name="matchId" type="string">
+  The ID of the Match document (new or pre-existing).
+</ResponseField>
+<ResponseField name="recomendacion" type="object | null">
+  Any active date recommendation on this match document.
+</ResponseField>
+
+### Error responses
+
+| Status | Body | Description |
+|---|---|---|
+| `400` | `{ "message": "No puedes darte like a ti mismo" }` | `targetId` equals the current user's ID |
+| `400` | `{ "message": "Ya le diste like a este usuario" }` | Duplicate like attempted |
+
+### Example
+
+```bash
+curl -X POST https://api.debuta.app/api/matches/like/64f1a2b3c4d5e6f7a8b9c0d1 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## POST /api/matches/dislike/:targetId
+
+Records a dislike against `targetId`. The target user will no longer appear in the current user's discovery feed. No Socket.io event is emitted for dislikes.
+
+### Path parameters
+
+<ParamField path="targetId" type="string" required>
+  The MongoDB `_id` of the user to dislike.
+</ParamField>
+
+### Response `200 OK`
+
+```json
+{ "message": "Dislike registrado" }
+```
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `400` | Already interacted with this user |
+| `400` | Cannot dislike yourself |
+
+### Example
+
+```bash
+curl -X POST https://api.debuta.app/api/matches/dislike/64f1a2b3c4d5e6f7a8b9c0d1 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## POST /api/matches/:id/accept-date
+
+Accepts the active restaurant date suggestion on a match. The server records which user accepted via `user1Acepta` / `user2Acepta` flags. When **both** users have accepted, `recomendacion.estado` changes to `"aceptada"` and a `cita:confirmada` Socket.io event is emitted to the restaurant's associated partner account. The other user also receives a `cita:estado-actualizado` event immediately.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The Match document ID (returned in `GET /api/matches` as `id`).
+</ParamField>
+
+### Response `200 OK`
+
+```json
+{
+  "message": "Cita aceptada",
+  "recomendacion": {
+    "restauranteId": "64f9000000000000000000bb",
+    "asociadoId": "64f9000000000000000000cc",
+    "estado": "pendiente",
+    "user1Acepta": true,
+    "user2Acepta": false,
+    "fechaSugerida": "Sábado 8:00 PM",
+    "sugeridaEn": "2024-07-15T21:10:00.000Z"
+  }
+}
+```
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `400` | No active date suggestion on this match |
+| `403` | Current user is not part of this match |
+| `404` | Match not found |
+
+### Example
+
+```bash
+curl -X POST https://api.debuta.app/api/matches/64f1a2b3c4d5e6f7a8b9c0d2/accept-date \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## POST /api/matches/:id/reject-date
+
+Marks the current date suggestion as `"rechazada"`. Neither user can act on the suggestion after rejection until a new one is proposed.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The Match document ID.
+</ParamField>
+
+### Response `200 OK`
+
+```json
+{
+  "message": "Cita rechazada",
+  "recomendacion": {
+    "estado": "rechazada",
+    "user1Acepta": false,
+    "user2Acepta": false,
+    "fechaSugerida": "Viernes 7:30 PM"
+  }
+}
+```
+
+### Example
+
+```bash
+curl -X POST https://api.debuta.app/api/matches/64f1a2b3c4d5e6f7a8b9c0d2/reject-date \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## POST /api/matches/:id/suggest-new-place
+
+Replaces the current date suggestion with a randomly selected active restaurant that is different from the current one. Both users receive a `cita:nueva-sugerencia` Socket.io event with the full new restaurant payload.
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The Match document ID.
+</ParamField>
+
+### Response `200 OK`
+
+```json
+{
+  "message": "Nuevo lugar sugerido",
+  "restaurante": {
+    "_id": "64f9000000000000000000dd",
+    "nombre": "Cielo Rojo",
+    "descripcion": "Cocina de autor con vista panorámica.",
+    "categoria": "fusión",
+    "ambiente": "romántico",
+    "direccion": "Cra. 43A #18-17, Medellín",
+    "precio_promedio": "$$$",
+    "horario": "Lunes a Domingo 12pm – 11pm",
+    "foto_portada": {
+      "url": "https://res.cloudinary.com/debuta/image/upload/v1/restaurants/cielorojo.jpg",
+      "public_id": "restaurants/cielorojo"
+    }
+  },
+  "recomendacion": {
+    "restauranteId": "64f9000000000000000000dd",
+    "estado": "pendiente",
+    "user1Acepta": false,
+    "user2Acepta": false,
+    "fechaSugerida": "Domingo 9:00 PM",
+    "sugeridaEn": "2024-07-15T22:00:00.000Z"
+  }
+}
+```
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `403` | Current user is not part of this match |
+| `404` | Match not found, or no other restaurants available |
+
+### Example
+
+```bash
+curl -X POST https://api.debuta.app/api/matches/64f1a2b3c4d5e6f7a8b9c0d2/suggest-new-place \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## Date suggestion object
+
+The `recomendacion` field appears on match objects whenever a date has been suggested.
+
+<ResponseField name="recomendacion" type="object | null">
+  <ResponseField name="restauranteId" type="string">
+    ID of the suggested restaurant.
+  </ResponseField>
+  <ResponseField name="asociadoId" type="string">
+    ID of the restaurant's partner (associated user account).
+  </ResponseField>
+  <ResponseField name="estado" type="string">
+    Current status: `"pendiente"`, `"aceptada"`, or `"rechazada"`.
+  </ResponseField>
+  <ResponseField name="user1Acepta" type="boolean">
+    Whether the first user in the match has accepted.
+  </ResponseField>
+  <ResponseField name="user2Acepta" type="boolean">
+    Whether the second user in the match has accepted.
+  </ResponseField>
+  <ResponseField name="fechaSugerida" type="string">
+    Human-readable suggested date/time, e.g. `"Sábado 8:00 PM"`.
+  </ResponseField>
+  <ResponseField name="sugeridaEn" type="string">
+    ISO 8601 timestamp of when the suggestion was generated.
+  </ResponseField>
+</ResponseField>
+
+---
+
+<Note>
+  Date suggestions are **not** triggered via REST. The server automatically generates a
+  `cita:sugerencia` Socket.io event and saves a `recomendacion` to the match document
+  when the total message count in the conversation reaches **5**. Use this REST API only
+  to respond to a suggestion (accept, reject, or swap venue) after it has been created.
+</Note>

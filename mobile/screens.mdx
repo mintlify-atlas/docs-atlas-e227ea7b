@@ -1,0 +1,217 @@
+---
+title: "Debuta App Screens and Navigation Structure"
+sidebarTitle: "Screens"
+description: "Full reference for every screen in the Debuta mobile app — onboarding, discover, matches, chat, profile, settings, partner portal, and admin views."
+---
+
+Debuta uses [Expo Router](https://expo.github.io/router/) for file-based routing. Every file inside the `app/` directory becomes a route automatically — no manual route registration is required. The root layout (`app/_layout.tsx`) wraps the entire navigator tree with `ThemeProvider`, `SocketProvider`, `NotificationProvider`, `CallProvider`, and `AlertProvider` so that every screen has access to theme tokens, the live socket connection, and the global call state.
+
+## Provider Hierarchy
+
+```tsx app/_layout.tsx
+<ThemeProvider>
+  <SocketProvider>
+    <NotificationProvider>
+      <CallProvider>
+        <AlertProvider>
+          <Stack screenOptions={{ headerShown: false }}>
+            {/* all screens */}
+          </Stack>
+        </AlertProvider>
+      </CallProvider>
+    </NotificationProvider>
+  </SocketProvider>
+</ThemeProvider>
+```
+
+All headers are hidden globally; each screen manages its own navigation chrome.
+
+---
+
+## Auth Flow (Public Routes)
+
+These screens are accessible without an authenticated session. `app/index.tsx` acts as the gateway — it checks for a stored `access_token` in AsyncStorage and redirects to the main tabs if one exists, or to `/login` otherwise.
+
+| Route | Screen | Description |
+|-------|--------|-------------|
+| `app/index.tsx` | SplashScreen | Checks token in AsyncStorage; redirects to `/(tabs)` if authenticated or `/login` if not. |
+| `app/login.tsx` | LoginScreen | Email + password login form. Supports Google and Facebook OAuth via `useAuth`. |
+| `app/register.tsx` | RegisterScreen | Multi-step registration: personal info, interests, and a facial-capture step using `expo-camera`. |
+| `app/onboarding.tsx` | OnboardingScreen | Shown after first registration; introduces app features. |
+| `app/forgot-password.tsx` | ForgotPasswordScreen | Submits the user's email to trigger a password reset code. |
+| `app/verify-code.tsx` | VerifyCodeScreen | Accepts the numeric code sent by the backend after a password reset request. |
+| `app/reset-password.tsx` | ResetPasswordScreen | Accepts and submits the new password after code verification. |
+| `app/terms.tsx` | TermsScreen | Displays the app's terms of service. |
+| `app/rules.tsx` | RulesScreen | Displays community rules. |
+
+### Key hooks used in auth screens
+
+<AccordionGroup>
+  <Accordion title="useAuth">
+    Wraps `authService` and the Expo OAuth providers. Returns `login`, `register`, `loginWithGoogle`, `loginWithFacebook`, `logout`, `clearError`, `googleReady`, and `facebookReady`. All async operations set a `loading` flag and populate `error` on failure.
+
+    ```ts hooks/useAuth.ts
+    const { login, loading, error } = useAuth();
+
+    const handleSubmit = async () => {
+      const ok = await login({ correo, password }, (user) => {
+        router.replace('/(tabs)');
+      });
+    };
+    ```
+  </Accordion>
+  <Accordion title="authService">
+    After a successful `login` or `register`, the service stores `access_token`, `user_id`, `user_name`, `user_role`, and `user_photo` in AsyncStorage. These are later read by `SocketContext` to authenticate the socket connection.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Main Tabs (`app/(tabs)/`)
+
+The tab navigator is declared in `app/(tabs)/_layout.tsx` using `@react-navigation/bottom-tabs`. All authenticated users land here after login.
+
+| Route | Screen | Description |
+|-------|--------|-------------|
+| `(tabs)/index.tsx` | DiscoverScreen | Swipeable card stack of potential matches. Swipe right to like, left to pass. Detects mutual matches and shows a match modal. |
+| `(tabs)/matches.tsx` | MatchesScreen | Grid of current matches, each showing the last message and unread count. Tapping opens the chat thread. |
+| `(tabs)/Chat.tsx` | ChatListScreen | List view of all active chat conversations ordered by most recent activity. |
+| `(tabs)/likes.tsx` | LikesScreen | Shows users who have liked the current user's profile. |
+| `(tabs)/profile.tsx` | ProfileScreen | Displays and allows editing of the current user's profile: bio, photos, interests, job, education. |
+| `(tabs)/settings.tsx` | SettingsScreen | App preferences, account management, theme toggle, and logout. |
+
+### DiscoverScreen — `(tabs)/index.tsx`
+
+The Discover screen is the app's primary interaction surface. It uses the `useDiscover` hook to fetch a paginated list of `UserProfile` objects from `GET /api/users/discover`.
+
+```ts hooks/useDiscover.ts
+const { profiles, loading, swiping, swipe, refetch } = useDiscover();
+
+// Swipe right (like) — returns match status immediately
+const result = await swipe(userId, 'like');
+if (result?.esMatch) {
+  // show match celebration modal
+}
+```
+
+The profile is removed from the local stack **before** the API call returns, so the UI never feels blocked. A guard (`swipingRef`) prevents duplicate swipe events from a double-tap.
+
+<Tip>
+  The `prependProfile` helper on `useDiscover` allows screens to re-insert a profile at the top of the stack — useful when an undo or admin action needs to resurface a card.
+</Tip>
+
+### MatchesScreen — `(tabs)/matches.tsx`
+
+Renders the `Match[]` list. Each `Match` object contains a `matched_user: UserProfile`, a `last_message`, and an `unread_count`. Tapping a match navigates to `app/chat/[userId]`.
+
+The `Match` type also carries an optional `recomendacion` field reflecting the status of the date suggestion for that match (`pendiente`, `aceptada`, or `rechazada`).
+
+---
+
+## Chat Thread — `app/chat/[userId].tsx`
+
+The dynamic route `chat/[userId]` renders a single conversation. It receives the target user's ID as a URL parameter and passes it to the `useChat` hook.
+
+```ts hooks/useChat.ts
+const {
+  messages, loading, sending,
+  sendMessage, myId,
+  dateSuggestion, dateLoading,
+  acceptDate, rejectDate, requestNewPlace,
+} = useChat(userId);
+```
+
+Messages are loaded initially via `GET /api/chat/:userId`. Incoming messages arrive in real time over the `mensaje:nuevo` socket event. If the socket is disconnected, the hook falls back to HTTP polling every 5 seconds.
+
+The screen also handles the date suggestion flow: when the `cita:sugerencia` event arrives (triggered after 5 messages in a match), a banner appears offering the suggested venue with `acceptDate` / `rejectDate` / `requestNewPlace` actions.
+
+---
+
+## Call Screen — `app/call.tsx`
+
+The call screen is registered as a `fullScreenModal` with a `fade` animation. It receives route parameters via `expo-router`:
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `userId` | `string` | The remote participant's user ID |
+| `name` | `string` | Display name shown on screen |
+| `photo` | `string` | Avatar URL |
+| `isVideo` | `'true' \| 'false'` | Whether the call includes video |
+| `type` | `'outgoing' \| 'active'` | Controls which UI state to show (ringing vs. connected) |
+
+The call screen reads `localStream` and `remoteStream` from `CallContext` and renders them using `RTCView` from `react-native-webrtc`. Controls for muting and toggling the camera are surfaced from the same context via `toggleMute` and `toggleCamera`.
+
+<Warning>
+  The call screen renders a fully functional WebRTC session only in a native development build. In Expo Go it will display the call UI but produce no audio or video.
+</Warning>
+
+---
+
+## Partner Portal — `app/partner/`
+
+The partner portal is a separate sub-stack accessible to venue partner accounts (`rol: 'partner'`). It uses its own `_layout.tsx` nested within the root Stack.
+
+| Route | Screen | Description |
+|-------|--------|-------------|
+| `partner/index.tsx` | PartnerDashboard | Overview screen for the partner account: stats, quick links. |
+| `partner/perfil.tsx` | PartnerProfile | Edit the venue's public profile information. |
+| `partner/fotos.tsx` | PartnerPhotos | Upload and manage venue photos used in date suggestions. |
+| `partner/citas.tsx` | PartnerDates | View and manage date reservations sent through Debuta. |
+| `partner/menu.tsx` | PartnerMenu | Manage the venue's menu items shown in the date suggestion card. |
+
+---
+
+## Admin Panel — `app/admin/`
+
+A minimal admin screen accessible to accounts with `rol: 'admin'`. The sub-stack lives at `app/admin/_layout.tsx` + `app/admin/index.tsx`.
+
+| Route | Screen | Description |
+|-------|--------|-------------|
+| `admin/index.tsx` | AdminDashboard | Admin-only management screen for users, content, and platform settings. |
+
+---
+
+## Type Reference
+
+Core types used across screens are defined in `components/types/index.ts`:
+
+```ts components/types/index.ts
+export interface UserProfile {
+  id: string;
+  username: string;
+  first_name: string;
+  last_name: string;
+  bio: string;
+  birth_date: string;
+  gender: string;
+  profile_picture: { url: string; public_id: string } | string | null;
+  photos?: { url: string; public_id: string }[];
+  interests: { name: string; icon: string }[];
+  afinidad?: Afinidad; // present in discover context only
+}
+
+export interface Match {
+  id: string;
+  matched_user: UserProfile;
+  created_at: string;
+  last_message?: Message;
+  unread_count?: number;
+  recomendacion?: {
+    asociadoId: string;
+    estado: string;
+    user1Acepta: boolean;
+    user2Acepta: boolean;
+  } | null;
+}
+
+export interface Message {
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  content: string;
+  created_at: string;
+  is_read: boolean;
+}
+```
+
+The `Afinidad` field on `UserProfile` is populated only by the discover endpoint and contains a `score`, `amigosFB` (mutual Facebook friends), `interesesComun` (common interests count), and a human-readable `resumen` string.

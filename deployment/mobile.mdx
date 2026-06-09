@@ -1,0 +1,147 @@
+---
+title: "Building and Deploying the Debuta Mobile App"
+sidebarTitle: "Mobile"
+description: "How to build and submit the Debuta React Native Expo app to the iOS App Store and Google Play Store using EAS Build and EAS Submit."
+---
+
+The Debuta mobile app is a React Native application built with Expo. Production builds are compiled in the cloud through **Expo Application Services (EAS)** — you do not need Xcode or Android Studio on your local machine to produce a store-ready binary. This guide walks through the complete process from configuring your environment to submitting to both stores.
+
+<Note>
+  WebRTC video calls use native device APIs that are not available in Expo Go. All testing that involves video or voice calls must be done on a **development build** (`eas build --profile development`), not in the Expo Go client.
+</Note>
+
+<Steps>
+
+### Install EAS CLI and Log In
+
+Install the EAS command-line tool globally and authenticate with your Expo account:
+
+```bash
+npm install -g eas-cli
+eas login
+```
+
+Verify the CLI is connected to the correct Expo account:
+
+```bash
+eas whoami
+```
+
+The project's EAS configuration links to project ID `1f521860-0fcd-4604-92da-3bf95ef017bc`. Make sure the logged-in account has access to this project in the [Expo dashboard](https://expo.dev).
+
+### Review `eas.json`
+
+The `eas.json` at the root of the `mobile/debuta` directory defines three build profiles:
+
+```json
+{
+  "cli": {
+    "version": ">= 18.12.1",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
+```
+
+| Profile | Purpose |
+|---|---|
+| `development` | Development client build distributed internally — required for WebRTC and other native modules |
+| `preview` | Internal APK build for Android testing without Play Store submission |
+| `production` | Store-ready build with automatic version code/number increment |
+
+`appVersionSource: "remote"` means EAS manages the version number remotely; `autoIncrement: true` in the production profile bumps the build number automatically on each production build.
+
+### Set the API URL
+
+Before triggering a production build, create or update the `.env` file in `mobile/debuta/` so the app points to your live backend:
+
+```bash
+EXPO_PUBLIC_API_URL=https://your-backend.com
+```
+
+This variable is read at build time and embedded in the JavaScript bundle. Rebuild the app any time the backend URL changes — changing the variable after a build has no effect on already-compiled binaries.
+
+<Warning>
+  Do not set `EXPO_PUBLIC_API_URL` to `http://localhost:3000` for production builds. The variable is public (prefixed with `EXPO_PUBLIC_`) and will be visible in the compiled bundle.
+</Warning>
+
+### Build for Android
+
+```bash
+cd mobile/debuta
+eas build --platform android --profile production
+```
+
+EAS will upload your project source, compile the Android AAB in the cloud, and provide a download link when the build finishes. The bundle format is an Android App Bundle (`.aab`) by default, which is required for Play Store submission.
+
+To build a standalone APK for direct installation (for testing, not store submission), use the `preview` profile instead:
+
+```bash
+eas build --platform android --profile preview
+```
+
+### Build for iOS
+
+```bash
+eas build --platform ios --profile production
+```
+
+An active **Apple Developer account** (paid membership) is required. EAS will prompt you to log in to Apple and will automatically create or reuse the required provisioning profile and distribution certificate.
+
+The output is an `.ipa` file ready for App Store submission.
+
+<Tip>
+  To build both platforms in parallel in a single command: `eas build --platform all --profile production`
+</Tip>
+
+### Submit to the Stores
+
+**Google Play Store:**
+
+```bash
+eas submit --platform android
+```
+
+You will need a Google Play service account JSON key. Follow the [EAS Submit documentation](https://docs.expo.dev/submit/android/) to generate one from the Google Play Console and configure it in your EAS project settings.
+
+**Apple App Store:**
+
+```bash
+eas submit --platform ios
+```
+
+EAS Submit uses App Store Connect API keys for authentication. Generate a key in App Store Connect → Users and Access → Keys, then provide the key ID, issuer ID, and `.p8` file when prompted or via EAS secrets.
+
+</Steps>
+
+## App Configuration Reference
+
+The `app.json` in `mobile/debuta/` defines the core application metadata:
+
+| Property | Value |
+|---|---|
+| `expo.name` | `debuta` |
+| `expo.slug` | `debuta` |
+| `expo.scheme` | `debuta` |
+| `expo.android.package` | `com.andressofia.debuta` |
+| `expo.extra.eas.projectId` | `1f521860-0fcd-4604-92da-3bf95ef017bc` |
+| `expo.version` | `1.0.0` |
+
+The iOS build declares `NSCameraUsageDescription` and `NSMicrophoneUsageDescription` in `infoPlist` for camera and microphone access required by video calls. The Android build declares the corresponding `CAMERA`, `RECORD_AUDIO`, and `MODIFY_AUDIO_SETTINGS` permissions in `app.json`.

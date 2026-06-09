@@ -1,0 +1,182 @@
+---
+title: "Running the Debuta Backend Server Locally"
+sidebarTitle: "Setup"
+description: "Install and run the Debuta Express + Socket.io backend server. Covers dependencies, MongoDB connection, Cloudinary setup, and development vs. production modes."
+---
+
+The Debuta backend is an **Express.js** HTTP server with **Socket.io** mounted on the same Node.js `http.Server` instance. It connects to **MongoDB Atlas** via Mongoose, offloads all photo storage to **Cloudinary**, and sends transactional emails (password resets) through **Nodemailer** over Gmail SMTP. A static admin panel is also served directly from the same process at the `/admin` path.
+
+## Prerequisites
+
+Before running the server, make sure the following are in place:
+
+<CardGroup cols={2}>
+  <Card title="Node.js 18+" icon="node">
+    The server targets the Node.js 18 LTS runtime or newer. Check your version with `node -v`.
+  </Card>
+  <Card title="MongoDB Atlas (or local)" icon="database">
+    You need a MongoDB connection string. MongoDB Atlas free tier works fine for local development.
+  </Card>
+  <Card title="Cloudinary Account" icon="cloud">
+    A free Cloudinary account provides the `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` values.
+  </Card>
+  <Card title="Gmail App Password" icon="envelope">
+    A Gmail address with a 16-character **app password** (not your regular Gmail password) is required for Nodemailer to send emails.
+  </Card>
+</CardGroup>
+
+## Installation
+
+<Steps>
+  <Step title="Navigate to the backend directory">
+    ```bash
+    cd backend
+    ```
+  </Step>
+  <Step title="Install dependencies">
+    ```bash
+    npm install
+    ```
+
+    This installs all production and development dependencies declared in `package.json`, including Express, Socket.io, Mongoose, Cloudinary, Multer, Nodemailer, bcryptjs, jsonwebtoken, google-auth-library, and nodemon.
+  </Step>
+  <Step title="Create your environment file">
+    Copy the provided example and fill in your own values:
+
+    ```bash
+    cp .env.example .env
+    ```
+
+    See the [Configuration](/backend/configuration) page for a full description of every variable.
+  </Step>
+  <Step title="Start the server">
+    Use the development script to start with automatic restarts:
+
+    ```bash
+    npm run dev
+    ```
+
+    Or start in production mode:
+
+    ```bash
+    npm start
+    ```
+  </Step>
+</Steps>
+
+## npm Scripts
+
+| Script | Command | Description |
+|---|---|---|
+| `npm run dev` | `nodemon server.js` | Starts the server with nodemon for automatic restarts on file changes. Runs `auto-whitelist.js` first via the `predev` hook. |
+| `npm start` | `node server.js` | Production start. Runs `auto-whitelist.js` first via the `prestart` hook before launching the server. |
+| `npm run whitelist` | `node scripts/auto-whitelist.js` | Adds the machine's current public IP to the MongoDB Atlas IP access list. Useful when your IP changes. |
+
+<Note>
+  Both `npm run dev` and `npm start` automatically run `scripts/auto-whitelist.js` before the server starts via npm's `predev` and `prestart` lifecycle hooks. If the Atlas Admin API keys (`ATLAS_PUBLIC_KEY`, `ATLAS_PRIVATE_KEY`, `ATLAS_PROJECT_ID`) are not set in `.env`, the whitelist script exits silently without error so the server still starts.
+</Note>
+
+## How the Server Starts
+
+`server.js` is the entry point. It loads the environment with `dotenv`, creates a Node.js `http.Server` from the Express `app`, initialises Socket.io on that server, then connects to MongoDB with an exponential-backoff retry loop (up to 5 attempts, starting at 3 s). The HTTP server begins listening only after the MongoDB connection is established.
+
+```js
+const http = require('http');
+const app = require('./src/app');
+const { initSocket } = require('./src/socket');
+
+const PORT = process.env.PORT || 3000;
+const server = http.createServer(app);
+initSocket(server); // Socket.io shares the same HTTP server
+
+await mongoose.connect(process.env.MONGO_URI);
+server.listen(PORT, '0.0.0.0');
+```
+
+## Directory Structure
+
+```
+backend/
+├── server.js                  # Entry point — HTTP server, MongoDB connection
+├── scripts/
+│   └── auto-whitelist.js      # Adds current IP to MongoDB Atlas whitelist
+└── src/
+    ├── app.js                 # Express app — CORS, routes, static admin panel
+    ├── socket.js              # Socket.io initialisation and event handlers
+    ├── controllers/           # Route handler logic (auth, users, matches, …)
+    ├── routes/                # Express Router definitions
+    ├── models/                # Mongoose schema/model definitions
+    ├── middlewares/           # Auth guards and other middleware
+    └── helpers/               # Cloudinary, Nodemailer, serialiser utilities
+```
+
+## API Routes
+
+`app.js` mounts the following route groups under `/api`:
+
+| Prefix | Module | Purpose |
+|---|---|---|
+| `/api` | `auth.routes` | Login, registration, `GET /api/me` |
+| `/api/users` | `user.routes` | Profile reads and updates |
+| `/api/matches` | `match.routes` | Swipe decisions and match retrieval |
+| `/api/chat` | `chat.routes` | Chat history |
+| `/api/settings` | `settings.routes` | Discovery filter preferences |
+| `/api/likes` | `likes.routes` | Who liked me |
+| `/api/report` | `report.routes` | Report a user |
+| `/api/facial` | `facial.routes` | Facial recognition |
+| `/api/posts` | `post.routes` | User wall posts |
+| `/api/admin` | `admin.routes` | Admin-only management endpoints |
+| `/api/asociado` | `asociado.routes` | Restaurant partner endpoints |
+| `/api/auth` | `social.routes` | Google and Facebook OAuth |
+| `/api/password` | `password.routes` | Password reset flow |
+| `/api/soporte` | `soporte.routes` | Support tickets |
+
+## Admin Panel
+
+The static admin panel (a separate frontend build) is served from the `admin/` directory at the root of the repository. Express maps it to the `/admin` path:
+
+```
+GET /admin        → admin/index.html
+GET /admin/*      → admin/index.html  (client-side routing fallback)
+```
+
+## Health Check
+
+A lightweight health check endpoint is available without authentication:
+
+```
+GET /health
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-11-15T14:32:00.000Z"
+}
+```
+
+Use this endpoint to verify the server is running in CI pipelines, load balancers, or uptime monitors.
+
+## CORS Behaviour
+
+CORS handling differs by environment:
+
+- **`development`** — all origins are allowed (`cors()` with no restrictions).
+- **`production`** — only origins listed in `ALLOWED_ORIGINS` (comma-separated) are permitted. Requests from unlisted origins receive a CORS error. Socket.io applies the same policy.
+
+```js
+// app.js — production CORS guard
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : [];
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    cb(new Error(`CORS bloqueado: ${origin}`));
+  },
+  credentials: true,
+}));
+```

@@ -1,0 +1,494 @@
+---
+title: "Partner Restaurant Portal API"
+sidebarTitle: "Partners"
+description: "API for Debuta restaurant partners (asociados): manage restaurant profile, photos, menu items, view date bookings, and access engagement statistics."
+---
+
+Restaurant partners — called *asociados* in the codebase — have a dedicated set of endpoints to manage their presence on the Debuta platform. Partners can maintain their restaurant profile, upload a cover photo and gallery (up to 10 images), manage a menu of up to 30 dishes, view date bookings that were matched to their venue, and review engagement statistics. Every endpoint in this group requires a JWT belonging to a user with `rol: 'asociado'`.
+
+<Note>
+  The `asociado` role is not self-assignable. It must be granted by a Debuta admin via `PUT /api/admin/users/:id/role`. Contact the platform team to have your account upgraded.
+</Note>
+
+---
+
+## The Restaurante Object
+
+<ResponseField name="restaurante" type="object">
+  The full restaurant profile returned by most partner endpoints.
+
+  <Expandable title="Restaurante fields">
+    <ResponseField name="_id" type="string">MongoDB ObjectId of the restaurant document.</ResponseField>
+    <ResponseField name="asociadoId" type="string">ObjectId of the partner user who owns this profile.</ResponseField>
+    <ResponseField name="nombre" type="string">Restaurant name. Maximum 150 characters.</ResponseField>
+    <ResponseField name="descripcion" type="string">Short description. Maximum 500 characters.</ResponseField>
+    <ResponseField name="categoria" type="string">
+      Cuisine type. Allowed values: `italiano`, `mexicano`, `japonés`, `chino`, `colombiano`, `peruano`, `francés`, `americano`, `bar`, `café`, `pizzería`, `mariscos`, `parrilla`, `vegetariano`, `fusión`, `postres`, `otro`.
+    </ResponseField>
+    <ResponseField name="ambiente" type="string">
+      Venue atmosphere. Allowed values: `romántico`, `casual`, `elegante`, `familiar`, `fiesta`, `terraza`, `íntimo`.
+    </ResponseField>
+    <ResponseField name="direccion" type="string">Street address. Maximum 300 characters.</ResponseField>
+    <ResponseField name="ciudad" type="string">City name.</ResponseField>
+    <ResponseField name="telefono" type="string">Contact phone number.</ResponseField>
+    <ResponseField name="horario" type="string">Opening hours description. Maximum 200 characters.</ResponseField>
+    <ResponseField name="precio_promedio" type="string">
+      Price range indicator. One of: `$`, `$$`, `$$$`, `$$$$`.
+    </ResponseField>
+    <ResponseField name="website" type="string">Restaurant website URL.</ResponseField>
+    <ResponseField name="instagram" type="string">Instagram handle.</ResponseField>
+    <ResponseField name="foto_portada" type="object | null">
+      Cover photo object: `{ url, public_id }`. `null` if not set.
+    </ResponseField>
+    <ResponseField name="fotos" type="object[]">
+      Gallery array. Each item: `{ url, public_id }`. Maximum 10 items.
+    </ResponseField>
+    <ResponseField name="menu" type="object[]">
+      Array of menu items (see MenuItem below). Maximum 30 items.
+    </ResponseField>
+    <ResponseField name="latitude" type="number | null">Geographic latitude.</ResponseField>
+    <ResponseField name="longitude" type="number | null">Geographic longitude.</ResponseField>
+    <ResponseField name="activo" type="boolean">Whether the restaurant is listed as active on the platform.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+    <ResponseField name="updatedAt" type="string">ISO 8601 last-updated timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### MenuItem schema
+
+<ResponseField name="menu[]" type="object">
+  <Expandable title="MenuItem fields">
+    <ResponseField name="_id" type="string">MongoDB ObjectId of the menu item (used for deletion).</ResponseField>
+    <ResponseField name="nombre" type="string" required>Dish name. Required.</ResponseField>
+    <ResponseField name="descripcion" type="string">Short description of the dish.</ResponseField>
+    <ResponseField name="precio" type="string">Price label (free-form string, e.g. `"$12.000"`).</ResponseField>
+    <ResponseField name="foto" type="object | null">Dish photo: `{ url, public_id }`. `null` if no photo.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Endpoints
+
+<CardGroup cols={2}>
+  <Card title="GET /api/asociado/restaurante" icon="store">
+    Get the partner's restaurant profile.
+  </Card>
+  <Card title="PUT /api/asociado/restaurante" icon="pen">
+    Update restaurant text information.
+  </Card>
+  <Card title="POST /api/asociado/restaurante/fotos" icon="image">
+    Upload restaurant photos to Cloudinary.
+  </Card>
+  <Card title="DELETE /api/asociado/restaurante/fotos/:publicId" icon="trash">
+    Delete a restaurant photo.
+  </Card>
+  <Card title="PUT /api/asociado/restaurante/menu" icon="utensils">
+    Replace the entire menu array.
+  </Card>
+  <Card title="POST /api/asociado/restaurante/menu/plato" icon="circle-plus">
+    Add a single menu item.
+  </Card>
+  <Card title="DELETE /api/asociado/restaurante/menu/:platoId" icon="circle-minus">
+    Remove a menu item.
+  </Card>
+  <Card title="GET /api/asociado/citas" icon="calendar">
+    View date bookings at your restaurant.
+  </Card>
+  <Card title="GET /api/asociado/estadisticas" icon="chart-bar">
+    View engagement statistics.
+  </Card>
+</CardGroup>
+
+---
+
+### GET /api/asociado/restaurante
+
+Returns the restaurant profile linked to the authenticated partner. If no profile exists yet (first login), an empty profile document is automatically created and returned.
+
+**Authentication:** Bearer JWT with `rol: 'asociado'` required.
+
+#### Response `200`
+
+```json
+{
+  "restaurante": {
+    "_id": "665f3a4b5c6d7e8f9a0b1c2d",
+    "asociadoId": "665f000000000000000000aa",
+    "nombre": "La Terraza de Sofía",
+    "descripcion": "Rooftop restaurant with panoramic city views and Mediterranean fusion.",
+    "categoria": "fusión",
+    "ambiente": "romántico",
+    "direccion": "Calle 93 #13-45, piso 12",
+    "ciudad": "Bogotá",
+    "telefono": "+57 310 555 0101",
+    "horario": "Lunes–Sábado 12:00–23:00, Domingo 12:00–18:00",
+    "precio_promedio": "$$$",
+    "website": "https://laterrazadesofia.co",
+    "instagram": "@laterrazadesofia",
+    "foto_portada": {
+      "url": "https://res.cloudinary.com/debuta/image/upload/v1/restaurantes/portada.jpg",
+      "public_id": "restaurantes/portada"
+    },
+    "fotos": [],
+    "menu": [],
+    "latitude": 4.6769,
+    "longitude": -74.0478,
+    "activo": true,
+    "createdAt": "2024-05-01T09:00:00.000Z",
+    "updatedAt": "2024-06-04T12:00:00.000Z"
+  }
+}
+```
+
+#### curl example
+
+```bash
+curl -X GET https://api.debuta.app/api/asociado/restaurante \
+  -H "Authorization: Bearer <asociado-token>"
+```
+
+---
+
+### PUT /api/asociado/restaurante
+
+Updates any combination of the restaurant's text fields. Only the fields provided in the request body are modified; omitted fields retain their current values. Runs validators defined in the schema (enum checks for `categoria`, `ambiente`, `precio_promedio`).
+
+**Authentication:** Bearer JWT with `rol: 'asociado'` required.
+
+#### Request body (all fields optional)
+
+<ParamField body="nombre" type="string">Restaurant name. Max 150 chars.</ParamField>
+<ParamField body="descripcion" type="string">Description. Max 500 chars.</ParamField>
+<ParamField body="categoria" type="string">Cuisine category (see enum values in the schema above).</ParamField>
+<ParamField body="ambiente" type="string">Atmosphere type (see enum values above).</ParamField>
+<ParamField body="direccion" type="string">Street address. Max 300 chars.</ParamField>
+<ParamField body="ciudad" type="string">City.</ParamField>
+<ParamField body="telefono" type="string">Phone number.</ParamField>
+<ParamField body="horario" type="string">Hours description. Max 200 chars.</ParamField>
+<ParamField body="precio_promedio" type="string">Price tier: `$`, `$$`, `$$$`, or `$$$$`.</ParamField>
+<ParamField body="website" type="string">Website URL.</ParamField>
+<ParamField body="instagram" type="string">Instagram handle.</ParamField>
+<ParamField body="latitude" type="number">Geographic latitude. Updates `location.coordinates` automatically.</ParamField>
+<ParamField body="longitude" type="number">Geographic longitude.</ParamField>
+
+#### Response `200`
+
+Returns the full updated `restaurante` object (same shape as GET above).
+
+#### curl example
+
+```bash
+curl -X PUT https://api.debuta.app/api/asociado/restaurante \
+  -H "Authorization: Bearer <asociado-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "La Terraza de Sofía",
+    "categoria": "fusión",
+    "ambiente": "romántico",
+    "precio_promedio": "$$$",
+    "horario": "Lunes–Sábado 12:00–23:00",
+    "latitude": 4.6769,
+    "longitude": -74.0478
+  }'
+```
+
+---
+
+### POST /api/asociado/restaurante/fotos
+
+Uploads one or more restaurant photos to Cloudinary. Accepts images as base64 strings. Set `esPortada: true` to designate the first uploaded image as the cover photo — any previously stored cover is deleted from Cloudinary first. Gallery photos are appended up to a maximum of **10 images**.
+
+**Authentication:** Bearer JWT with `rol: 'asociado'` required.
+
+**Content-Type:** `application/json`
+
+#### Request body
+
+<ParamField body="fotos" type="string | string[]" required>
+  A single base64 image string, or an array of base64 strings to upload in batch.
+</ParamField>
+
+<ParamField body="esPortada" type="boolean">
+  If `true`, treats the first image in `fotos` as the new cover photo (`foto_portada`). Defaults to `false`.
+</ParamField>
+
+#### Response `200`
+
+```json
+{
+  "restaurante": { "...": "full restaurante object" },
+  "fotosSubidas": [
+    {
+      "url": "https://res.cloudinary.com/debuta/image/upload/v1/restaurantes/abc.jpg",
+      "public_id": "restaurantes/abc"
+    }
+  ]
+}
+```
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | Gallery already has 10 photos (non-cover upload). |
+| `401`  | Missing or invalid JWT / wrong role. |
+
+#### curl example
+
+```bash
+PHOTO_B64=$(base64 -w 0 /path/to/restaurant.jpg)
+
+# Upload cover photo
+curl -X POST https://api.debuta.app/api/asociado/restaurante/fotos \
+  -H "Authorization: Bearer <asociado-token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"fotos\": \"${PHOTO_B64}\", \"esPortada\": true}"
+
+# Upload multiple gallery photos
+curl -X POST https://api.debuta.app/api/asociado/restaurante/fotos \
+  -H "Authorization: Bearer <asociado-token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"fotos\": [\"${PHOTO_B64}\", \"${PHOTO_B64}\"]}"
+```
+
+---
+
+### DELETE /api/asociado/restaurante/fotos/:publicId
+
+Deletes a restaurant photo from both the database and Cloudinary. Works for both cover photos and gallery images. The `publicId` must be URL-encoded if it contains slashes (e.g. `restaurantes%2Fabc`).
+
+**Authentication:** Bearer JWT with `rol: 'asociado'` required.
+
+#### Path parameters
+
+<ParamField path="publicId" type="string" required>
+  URL-encoded Cloudinary `public_id` of the photo to delete.
+</ParamField>
+
+#### Response `200`
+
+Returns the full updated `restaurante` object.
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `404`  | Restaurant profile not found, or photo with that `public_id` does not exist. |
+
+#### curl example
+
+```bash
+curl -X DELETE \
+  "https://api.debuta.app/api/asociado/restaurante/fotos/restaurantes%2Fabc123" \
+  -H "Authorization: Bearer <asociado-token>"
+```
+
+---
+
+### PUT /api/asociado/restaurante/menu
+
+Replaces the restaurant's entire `menu` array in a single operation. Useful for bulk imports or reordering. The array must not exceed **30 items**.
+
+**Authentication:** Bearer JWT with `rol: 'asociado'` required.
+
+#### Request body
+
+<ParamField body="menu" type="object[]" required>
+  Full replacement menu array. Each element is a MenuItem:
+
+  | Field | Type | Required | Description |
+  |-------|------|----------|-------------|
+  | `nombre` | string | ✓ | Dish name |
+  | `descripcion` | string | | Dish description |
+  | `precio` | string | | Price label, e.g. `"$18.000"` |
+</ParamField>
+
+#### Response `200`
+
+Returns the full updated `restaurante` object.
+
+#### curl example
+
+```bash
+curl -X PUT https://api.debuta.app/api/asociado/restaurante/menu \
+  -H "Authorization: Bearer <asociado-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "menu": [
+      { "nombre": "Burrata con tomate", "descripcion": "Fresh burrata, heirloom tomato, basil oil", "precio": "$28.000" },
+      { "nombre": "Pasta al tartufo", "descripcion": "Tagliatelle with black truffle cream", "precio": "$45.000" }
+    ]
+  }'
+```
+
+---
+
+### POST /api/asociado/restaurante/menu/plato
+
+Adds a single dish to the menu. Optionally accepts a base64 photo for the dish. The menu cannot exceed **30 items**; a `400` is returned if the limit is reached.
+
+**Authentication:** Bearer JWT with `rol: 'asociado'` required.
+
+#### Request body
+
+<ParamField body="nombre" type="string" required>
+  Dish name. Cannot be blank.
+</ParamField>
+
+<ParamField body="descripcion" type="string">
+  Description of the dish.
+</ParamField>
+
+<ParamField body="precio" type="string">
+  Price label (free-form, e.g. `"$32.000"`).
+</ParamField>
+
+<ParamField body="fotoBase64" type="string">
+  Optional base64-encoded dish photo uploaded to Cloudinary.
+</ParamField>
+
+#### Response `200`
+
+Returns the full updated `restaurante` object with the new dish appended to `menu`.
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `nombre` is missing or blank. |
+| `400`  | Menu already has 30 items. |
+
+#### curl example
+
+```bash
+curl -X POST https://api.debuta.app/api/asociado/restaurante/menu/plato \
+  -H "Authorization: Bearer <asociado-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Tiramisu della casa",
+    "descripcion": "House-made tiramisu with espresso and Marsala",
+    "precio": "$18.000"
+  }'
+```
+
+---
+
+### DELETE /api/asociado/restaurante/menu/:platoId
+
+Removes a single dish from the menu by its MongoDB `_id`. If the dish has a Cloudinary photo, it is also deleted from Cloudinary.
+
+**Authentication:** Bearer JWT with `rol: 'asociado'` required.
+
+#### Path parameters
+
+<ParamField path="platoId" type="string" required>
+  MongoDB ObjectId of the dish to remove (available as `_id` in the `menu` array).
+</ParamField>
+
+#### Response `200`
+
+Returns the full updated `restaurante` object.
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `404`  | Restaurant not found, or `platoId` not in the menu. |
+
+#### curl example
+
+```bash
+curl -X DELETE \
+  "https://api.debuta.app/api/asociado/restaurante/menu/665f4a5b6c7d8e9f0a1b2c3d" \
+  -H "Authorization: Bearer <asociado-token>"
+```
+
+---
+
+### GET /api/asociado/citas
+
+Returns a list of confirmed date bookings at the partner's restaurant. A booking is created when the Debuta matching algorithm recommends the restaurant to a matched couple and **both users accept** the recommendation.
+
+**Authentication:** Bearer JWT with `rol: 'asociado'` required.
+
+#### Response `200`
+
+```json
+{
+  "citas": [
+    {
+      "matchId": "665f5a6b7c8d9e0f1a2b3c4d",
+      "pareja": [
+        {
+          "_id": "665f000000000000000000aa",
+          "first_name": "Sofía",
+          "last_name": "Ramírez",
+          "username": "sofi.r",
+          "profile_picture": { "url": "...", "public_id": "..." }
+        },
+        {
+          "_id": "665f000000000000000000bb",
+          "first_name": "Carlos",
+          "last_name": "Mendoza",
+          "username": "carlos.m",
+          "profile_picture": { "url": "...", "public_id": "..." }
+        }
+      ],
+      "fechaSugerida": "2024-06-10",
+      "fechaAceptacion": "2024-06-04T15:30:00.000Z",
+      "estado": "aceptada"
+    }
+  ]
+}
+```
+
+<ResponseField name="citas[].matchId" type="string">ObjectId of the match document.</ResponseField>
+<ResponseField name="citas[].pareja" type="object[]">Array of two populated user objects (the couple).</ResponseField>
+<ResponseField name="citas[].fechaSugerida" type="string">Suggested date string, if one was set during recommendation.</ResponseField>
+<ResponseField name="citas[].fechaAceptacion" type="string">ISO 8601 timestamp of when both users accepted.</ResponseField>
+<ResponseField name="citas[].estado" type="string">Always `"aceptada"` in this list.</ResponseField>
+
+#### curl example
+
+```bash
+curl -X GET https://api.debuta.app/api/asociado/citas \
+  -H "Authorization: Bearer <asociado-token>"
+```
+
+---
+
+### GET /api/asociado/estadisticas
+
+Returns aggregate engagement statistics for the partner's restaurant.
+
+**Authentication:** Bearer JWT with `rol: 'asociado'` required.
+
+#### Response `200`
+
+```json
+{
+  "estadisticas": {
+    "totalCitas": 47,
+    "citasMes": 8,
+    "citasPendientes": 3
+  }
+}
+```
+
+<ResponseField name="estadisticas.totalCitas" type="number">
+  Total number of confirmed (accepted) date bookings at this restaurant since it joined the platform.
+</ResponseField>
+<ResponseField name="estadisticas.citasMes" type="number">
+  Confirmed bookings in the current calendar month (resets on the 1st).
+</ResponseField>
+<ResponseField name="estadisticas.citasPendientes" type="number">
+  Recommendations that have been made but not yet accepted by both users.
+</ResponseField>
+
+#### curl example
+
+```bash
+curl -X GET https://api.debuta.app/api/asociado/estadisticas \
+  -H "Authorization: Bearer <asociado-token>"
+```

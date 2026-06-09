@@ -1,0 +1,213 @@
+---
+title: "Debuta System Architecture Overview"
+sidebarTitle: "Architecture"
+description: "How the Debuta mobile app, Express REST API, Socket.io server, MongoDB database, Cloudinary storage, and admin panel connect and communicate."
+---
+
+Debuta is composed of four runtime components — a React Native mobile app, a Node.js/Express REST API, a Socket.io real-time server, and a vanilla-JS admin panel — all backed by MongoDB Atlas for persistence and Cloudinary for binary file storage. Every component communicates through a single Express server process: REST over HTTP and events over WebSockets on the same port.
+
+## Component Diagram
+
+```
+┌─────────────────────────────────┐
+│      Mobile App (Expo RN)       │
+│  iOS · Android                  │
+│                                 │
+│  axios (REST)  socket.io-client │
+└────────┬────────────┬───────────┘
+         │ HTTP/REST  │ WebSocket
+         ▼            ▼
+┌─────────────────────────────────┐
+│   Express Server  (port 3000)   │
+│                                 │
+│  /api/*  routes    Socket.io    │◄──── /admin (static files)
+│  JWT middleware    onlineUsers  │           │
+│  Multer uploads    pendingCalls │     Admin Panel (browser)
+└────────┬────────────┬───────────┘
+         │            │
+         ▼            ▼
+   MongoDB Atlas   Cloudinary
+   (Mongoose ODM)  (images/files)
+```
+
+<Note>
+  The Express HTTP server and the Socket.io server share the same port. There is no separate WebSocket port to open in your firewall or configure in a reverse proxy. In production, set `ALLOWED_ORIGINS` to restrict both REST CORS and Socket.io CORS to your known origins.
+</Note>
+
+## JWT Authentication Flow
+
+All protected REST routes run the `verificarToken` middleware from `src/middlewares/auth.middleware.js`. The mobile client stores the token in `AsyncStorage` under the key `access_token` and attaches it to every request via an Axios interceptor:
+
+```ts
+// components/services/api.ts — request interceptor
+const token = await AsyncStorage.getItem('access_token');
+if (token) config.headers['Authorization'] = `Bearer ${token}`;
+```
+
+The middleware on the server side validates the token and loads the full user document:
+
+```js
+// src/middlewares/auth.middleware.js
+const token   = header.split(' ')[1];           // strip "Bearer "
+const decoded = jwt.verify(token, process.env.JWT_SECRET);
+const usuario = await Usuario.findById(decoded.id)
+  .select('+social_friend_ids interests ciudad birth_date settings rol activo latitude longitude');
+req.usuario = usuario;                           // available to all downstream handlers
+```
+
+**Socket.io authentication** follows the same pattern but uses the handshake payload instead of an HTTP header:
+
+```js
+// Client — before calling socket.connect()
+socket.auth = { token: accessToken };
+
+// Server — src/socket.js middleware
+const token   = socket.handshake.auth?.token;
+const decoded = jwt.verify(token, process.env.JWT_SECRET);
+socket.usuarioId = decoded.id;
+```
+
+An invalid or missing token causes the socket connection to be refused before any event handlers run.
+
+### Role-Based Middleware
+
+Three middleware functions gate access beyond basic authentication:
+
+| Middleware | Allowed role | HTTP status on failure |
+|---|---|---|
+| `verificarToken` | Any authenticated user | `401 Unauthorized` |
+| `soloAdmin` | `admin` | `403 Forbidden` |
+| `soloAsociado` | `asociado` | `403 Forbidden` |
+
+## API Route Map
+
+All application routes are mounted under the `/api` prefix in `src/app.js`. The admin panel is served separately as static files.
+
+| Mount path | Route file | Purpose |
+|---|---|---|
+| `/api` | `auth.routes.js` | Register, login, and token management |
+| `/api/users` | `user.routes.js` | Profile CRUD, discovery / swipe feed |
+| `/api/matches` | `match.routes.js` | Match listing, unmatch, date suggestion state |
+| `/api/chat` | `chat.routes.js` | Message history (REST fallback for Socket.io) |
+| `/api/settings` | `settings.routes.js` | Notification and privacy preferences |
+| `/api/likes` | `likes.routes.js` | Retrieve users who liked the current user |
+| `/api/report` | `report.routes.js` | Submit and manage user reports |
+| `/api/facial` | `facial.routes.js` | Facial verification upload and status |
+| `/api/posts` | `post.routes.js` | Social-wall posts (create, list, react) |
+| `/api/admin` | `admin.routes.js` | Admin-only user/content management |
+| `/api/asociado` | `asociado.routes.js` | Restaurant partner profile and photo management |
+| `/api/auth` | `social.routes.js` | Google and Facebook OAuth token exchange |
+| `/api/password` | `password.routes.js` | Forgot-password email and reset flow |
+| `/api/soporte` | `soporte.routes.js` | Support ticket creation and status |
+| `/admin` | Static files (`admin/`) | Vanilla-JS admin panel HTML/CSS/JS |
+| `/health` | Inline handler | Health check — returns `{ status: "ok" }` |
+
+<Note>
+  A `404` handler at the bottom of `app.js` catches any unmatched path and returns `{ "message": "Ruta no encontrada" }`. This applies only to paths not covered by the route table above.
+</Note>
+
+## Socket.io Architecture
+
+The Socket.io server is initialised in `src/socket.js` and attached to the same Node.js `http.Server` instance that Express runs on. Two in-memory data structures drive real-time features:
+
+| Structure | Type | Contents |
+|---|---|---|
+| `onlineUsers` | `Map<string, Date>` | Maps a `userId` string to the `Date` of their socket connection |
+| `pendingCalls` | `Map<string, object>` | Stores call payloads for offline users; entries expire after 60 seconds |
+
+When a socket authenticates and connects, the server immediately joins it to a **personal room** named `user:<userId>`. Targeted emissions (messages, call signals, date suggestions) always use this room so a user can have multiple sockets (e.g. tablet + phone) and receive every event.
+
+### Socket.io Events
+
+| Direction | Event | Payload summary | Description |
+|---|---|---|---|
+| Client → Server | `mensaje:enviar` | `{ paraId, content }` | Send a text message to a matched user |
+| Server → Client | `mensaje:nuevo` | Full message document + sender info | Delivered to both sender and receiver rooms |
+| Client → Server | `mensajes:leer` | `{ deId }` | Mark all messages from `deId` as read |
+| Client → Server | `presencia:estado` | `{ userId }` | Ask whether a user is currently online |
+| Server → Client | `presencia:respuesta` | `{ userId, online, lastSeen }` | Response to `presencia:estado` |
+| Server → All | `usuario:online` | `{ userId }` | Broadcast when a user connects |
+| Server → All | `usuario:offline` | `{ userId, lastSeen }` | Broadcast when a user disconnects |
+| Client → Server | `call:request` | `{ paraId, signalData, isVideo, callerName, callerPhoto }` | Initiate a WebRTC call |
+| Server → Client | `call:incoming` | `{ fromId, signalData, isVideo, callerName, callerPhoto }` | Notify receiver of an incoming call |
+| Server → Client | `call:waiting` | `{ paraId, reason: "offline" }` | Notify caller the receiver is offline |
+| Client → Server | `call:accept` | `{ paraId, signalData }` | Accept an incoming call |
+| Server → Client | `call:accepted` | `{ signalData, answererId }` | Notify caller the call was accepted |
+| Client → Server | `call:reject` | `{ paraId }` | Reject an incoming call |
+| Server → Client | `call:rejected` | `{ fromId }` | Notify caller the call was rejected |
+| Client → Server | `call:signal` | `{ paraId, signalData }` | Relay ICE candidates and re-negotiation |
+| Server → Client | `call:signal` | `{ fromId, signalData }` | Forwarded signal to the other peer |
+| Client → Server | `call:end` | `{ paraId }` | Hang up an active call |
+| Server → Client | `call:ended` | `{ fromId }` | Notify the other peer the call ended |
+| Client → Server | `call:audio-chunk` | `{ paraId, audioData, chunkIndex }` | Relay base64 audio for non-WebRTC fallback |
+| Server → Client | `call:audio-chunk` | `{ fromId, audioData, chunkIndex }` | Forwarded audio chunk to receiver |
+| Client → Server | `call:cancel_pending` | `{ paraId }` | Cancel a stored pending call before receiver reconnects |
+| Server → Both | `cita:sugerencia` | Restaurant + date suggestion object | Emitted automatically when a match reaches 5 messages |
+
+### Automated Date Suggestion Logic
+
+The `cita:sugerencia` event is emitted inside the `mensaje:enviar` handler — no client action is required. When the 5th message in a match is saved, the server:
+
+1. Queries active `Restaurante` documents (`activo: true`).
+2. Picks one at random and generates a suggested day/time (Friday, Saturday, or Sunday evening).
+3. Persists the recommendation inside the `Match` document under `recomendacion`.
+4. Emits `cita:sugerencia` to both users' personal rooms with full restaurant details (name, category, atmosphere, address, cover photo, gallery, average price, hours, and up to 3 menu items).
+
+## File Storage (Cloudinary)
+
+Binary assets are uploaded to Cloudinary through the backend — the mobile app never calls Cloudinary directly. Multer (`src/middlewares/upload.middleware.js`) handles `multipart/form-data` parsing before the controller streams the file to Cloudinary.
+
+| Asset type | Route | Notes |
+|---|---|---|
+| Profile picture | `PUT /api/users/profile-picture` | Single image, replaces previous |
+| Cover photo | `PUT /api/users/cover-photo` | Single image, replaces previous |
+| Gallery photos | `PUT /api/users/gallery` | Up to 6 images per user |
+| Chat image | Via `POST /api/chat/upload` or socket relay | Sent as `multipart/form-data` |
+| Restaurant cover photo | `POST /api/asociado/foto-portada` | Used in date suggestions |
+| Restaurant gallery | `POST /api/asociado/fotos` | Multiple photos for partner restaurants |
+
+The Express server is configured with a 20 MB body limit to accommodate multi-photo uploads sent as Base64 JSON when multipart is not suitable:
+
+```js
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+```
+
+The mobile API client uses a dedicated `uploadClient` Axios instance with a 90-second timeout for all file operations, separate from the 15-second timeout used for regular JSON requests.
+
+## Admin Panel
+
+The admin panel is a vanilla HTML/CSS/JS single-page application located in the `admin/` directory at the repository root. It is served directly by Express:
+
+```js
+// src/app.js
+const adminDir = path.join(__dirname, '../../admin');
+app.use('/admin', express.static(adminDir));
+app.get('/admin',   (_, res) => res.sendFile(path.join(adminDir, 'index.html')));
+app.get('/admin/*', (_, res) => res.sendFile(path.join(adminDir, 'index.html')));
+```
+
+This means the admin panel is available at `http://localhost:3000/admin` with no separate server process. It authenticates against the same `/api/login` endpoint and stores its JWT locally, then uses the `admin` JWT role to access `/api/admin/*` routes gated by the `soloAdmin` middleware.
+
+<Note>
+  In production, set `ALLOWED_ORIGINS` to include the domain where the admin panel is hosted if it is served from a different origin than the API. If both are on the same domain (e.g. behind an Nginx reverse proxy), no CORS configuration is needed for the admin panel.
+</Note>
+
+## User Roles
+
+Debuta supports three distinct roles, stored in the `rol` field of the `Usuario` MongoDB document:
+
+| Role | Description | Gating middleware |
+|---|---|---|
+| `user` | Standard app user — can swipe, chat, call, post | `verificarToken` |
+| `admin` | Full platform administrator — manages users, reports, tickets, and restaurantes | `verificarToken` + `soloAdmin` |
+| `asociado` | Restaurant partner — manages their own restaurant profile and photos for date suggestions | `verificarToken` + `soloAsociado` |
+
+Role escalation is not possible through any public API endpoint; the `rol` field can only be set by an existing `admin` through the `/api/admin` routes.
+
+## CORS Configuration
+
+CORS behaviour is determined by `NODE_ENV`:
+
+- **`development`** — `cors()` with no restrictions; all origins are allowed. This makes it easy to connect the Expo dev server, ngrok tunnels, or localtunnel without any configuration changes.
+- **`production`** — Only origins listed in the `ALLOWED_ORIGINS` environment variable (comma-separated) are permitted. Both the Express CORS middleware and the Socket.io CORS config read this same variable, so a single env change covers the entire server.

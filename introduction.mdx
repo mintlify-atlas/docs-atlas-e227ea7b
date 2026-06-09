@@ -1,0 +1,91 @@
+---
+title: "Debuta: A Full-Stack Dating App Platform"
+sidebarTitle: "Introduction"
+description: "Debuta is an open-source dating and social app built with React Native Expo, Express.js, MongoDB, and Socket.io. Covers architecture, features, and repository structure."
+---
+
+Debuta is a cross-platform dating and social mobile application that pairs a React Native (Expo) front end with a Node.js/Express back end to deliver real-time chat, video and audio calling, swipe-based discovery, facial verification, and automated date suggestions — all in a single cohesive codebase. Whether you are a developer looking to run Debuta locally, extend its features, or integrate with its REST API, these docs walk through every layer of the system.
+
+## Key Features
+
+- **Swipe-based discovery** — browse profiles with a gesture-driven card stack; mutual likes create a match.
+- **Real-time chat** — Socket.io–powered messaging between matched users, with read receipts and image sharing.
+- **Video & audio calls** — peer-to-peer calls via `react-native-webrtc` (WebRTC), with an in-app call UI and audio relay fallback for non-native environments.
+- **Facial verification** — camera-based identity check powered by `expo-camera` and the `/api/facial` route to reduce fake profiles.
+- **Automated date suggestions** — when a match reaches 5 messages, the server automatically recommends a partner restaurant with a suggested day and time, emitted over Socket.io as a `cita:sugerencia` event.
+- **Google & Facebook OAuth** — social sign-in backed by `google-auth-library` and the Facebook Graph API, mounted at `/api/auth`.
+- **Admin panel** — a vanilla-JS web panel served at `/admin` that shares the same REST API using the `admin` JWT role.
+- **Asociado (partner) portal** — a dedicated role and route group (`/api/asociado`) for restaurant partners to manage their profiles and date-suggestion listings.
+- **Support tickets** — users can open support tickets through `/api/soporte`, manageable from the admin panel.
+
+## Repository Structure
+
+The monorepo contains three top-level directories:
+
+```
+Native-tailwind/
+├── mobile/debuta/   # Expo / React Native application (iOS + Android)
+├── backend/         # Express REST API + Socket.io server
+└── admin/           # Vanilla HTML/JS/CSS admin web panel
+```
+
+Each directory is independently installable and has its own `package.json`. The `backend/` directory is the single source of truth for all data; both the mobile app and the admin panel communicate with it exclusively over HTTP and WebSockets.
+
+<CardGroup cols={2}>
+  <Card
+    title="Mobile App Setup"
+    icon="mobile"
+    href="/quickstart#launch-the-mobile-app"
+  >
+    Install and run the Expo / React Native front end on iOS or Android using Expo Go or a development build.
+  </Card>
+  <Card
+    title="Backend Setup"
+    icon="server"
+    href="/quickstart#start-the-backend"
+  >
+    Configure environment variables, connect to MongoDB Atlas, and start the Express + Socket.io server.
+  </Card>
+  <Card
+    title="Architecture Overview"
+    icon="diagram-project"
+    href="/architecture"
+  >
+    Understand how the mobile app, REST API, Socket.io server, MongoDB, and Cloudinary connect and communicate.
+  </Card>
+  <Card
+    title="Admin Panel"
+    icon="shield-halved"
+    href="/architecture#admin-panel"
+  >
+    Learn how the static vanilla-JS admin panel is served and how it authenticates using the admin JWT role.
+  </Card>
+</CardGroup>
+
+## Technology Stack
+
+| Layer | Technology | Version |
+|---|---|---|
+| **Mobile — framework** | React Native | 0.83.6 |
+| **Mobile — build tooling** | Expo | ~55.0.26 |
+| **Mobile — language** | TypeScript | ~5.9.2 |
+| **Mobile — routing** | Expo Router | ~55.0.16 |
+| **Mobile — real-time** | socket.io-client | ^4.8.3 |
+| **Mobile — calls** | react-native-webrtc | ^124.0.7 |
+| **Mobile — styling** | styled-components | ^6.3.11 |
+| **Backend — runtime** | Node.js | 18+ |
+| **Backend — framework** | Express | ^4.18.2 |
+| **Backend — database** | MongoDB via Mongoose | ^8.3.4 |
+| **Backend — real-time** | Socket.io | ^4.7.5 |
+| **Backend — auth** | JSON Web Tokens (jsonwebtoken) | ^9.0.2 |
+| **Backend — file storage** | Cloudinary SDK | ^2.9.0 |
+| **Backend — email** | Nodemailer | ^8.0.7 |
+| **Backend — password hashing** | bcryptjs | ^2.4.3 |
+| **Backend — social auth** | google-auth-library | ^10.6.2 |
+| **Admin panel** | Vanilla HTML / JS / CSS | — |
+
+## Who Should Use These Docs
+
+- **Developers setting up Debuta locally** — follow the [Quickstart](/quickstart) to have the full stack running in under 10 minutes.
+- **Contributors extending features** — the [Architecture](/architecture) page maps every API route, Socket.io event, and data model so you can find the right file immediately.
+- **Integration developers** — if you are building a third-party client or tooling that talks to the Debuta API, the route table and authentication flow in the Architecture page cover everything you need.

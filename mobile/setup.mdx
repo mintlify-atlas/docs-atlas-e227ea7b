@@ -1,0 +1,193 @@
+---
+title: "Setting Up the Debuta Mobile App"
+sidebarTitle: "Setup"
+description: "Install dependencies, configure environment variables, and run the Debuta React Native Expo app on iOS or Android in development or production."
+---
+
+The Debuta mobile app is built with [Expo](https://expo.dev) (SDK 55) and React Native 0.83. It uses Expo Router for file-based navigation, Socket.io for real-time messaging, and `react-native-webrtc` for peer-to-peer video and audio calls. This guide walks you through everything you need to get the app running locally — from installing Node dependencies to choosing the right run target for your workflow.
+
+## Prerequisites
+
+Before you begin, make sure the following tools are installed on your machine:
+
+<CardGroup cols={2}>
+  <Card title="Node.js 18+" icon="node">
+    Required for running the Metro bundler and build scripts. Check with `node -v`.
+  </Card>
+  <Card title="Expo CLI" icon="terminal">
+    Install globally: `npm install -g expo-cli` or use `npx expo` directly.
+  </Card>
+  <Card title="Android Studio / Xcode" icon="mobile">
+    Needed only if you want to run the app on an emulator or simulator. Expo Go works without either.
+  </Card>
+  <Card title="Expo Go (optional)" icon="mobile-screen">
+    Install [Expo Go](https://expo.dev/go) on a physical device for quick iteration without a native build. Video calls are not available in Expo Go.
+  </Card>
+</CardGroup>
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository and navigate to the mobile package">
+    ```bash
+    cd mobile/debuta
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    npm install
+    ```
+
+    This installs all runtime and dev dependencies declared in `package.json`, including Expo SDK 55, React 19, Socket.io client 4, `react-native-webrtc`, and `styled-components`.
+  </Step>
+
+  <Step title="Copy the environment file">
+    ```bash
+    cp .env.example .env
+    ```
+
+    Then open `.env` and fill in the values for your environment (see below).
+  </Step>
+</Steps>
+
+## Environment Variables
+
+All environment variables exposed to the app must be prefixed with `EXPO_PUBLIC_` so that Expo's bundler injects them at build time.
+
+```bash .env
+# URL base de la API backend de Debuta
+# - En desarrollo local (Expo Go): http://<tu_ip_local>:3000 o http://10.0.2.2:3000 (emulador)
+# - En producción: https://api.tudominio.com
+
+EXPO_PUBLIC_API_URL=https://api.debuta.com
+
+# ── Autenticación de Terceros ─────────────────────────────────────────────────
+EXPO_PUBLIC_GOOGLE_CLIENT_ID=tu_google_client_id.apps.googleusercontent.com
+EXPO_PUBLIC_FACEBOOK_APP_ID=tu_facebook_app_id
+```
+
+### How `EXPO_PUBLIC_API_URL` works
+
+The `api.ts` service and `SocketContext` both use the same resolution logic:
+
+```ts components/services/api.ts
+function getBaseUrl(): string {
+  // Uses .env value in production builds
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL + '/api';
+  }
+  // In development, reads the host IP Metro is serving from
+  const host =
+    Constants.expoConfig?.hostUri?.split(':')[0] ||
+    (Constants.manifest as any)?.debuggerHost?.split(':')[0];
+
+  if (host) return `http://${host}:3000/api`;
+  return 'http://localhost:3000/api';
+}
+```
+
+When you run `npx expo start` without setting `EXPO_PUBLIC_API_URL`, the app automatically reads Metro's `hostUri` and constructs the correct LAN IP for you. This means physical devices on the same Wi-Fi network will connect to your backend with no manual IP configuration.
+
+<Note>
+  If you are using the Android emulator, your backend must be reachable on `http://10.0.2.2:3000`. Set `EXPO_PUBLIC_API_URL=http://10.0.2.2:3000` in your `.env` or start your backend on that interface.
+</Note>
+
+## Running the App
+
+<CodeGroup>
+
+```bash Expo Go (any device)
+# Start the Metro bundler
+npx expo start
+
+# Scan the QR code with the Expo Go app on iOS or Android.
+# Video/audio calls are NOT available in Expo Go — use a dev build for that.
+```
+
+```bash Android emulator
+npx expo start --android
+# or, for a full native build:
+npm run android
+```
+
+```bash iOS simulator
+npx expo start --ios
+# or, for a full native build:
+npm run ios
+```
+
+```bash Web (experimental)
+npm run web
+# Note: react-native-webrtc and react-native-incall-manager
+# are stubbed out on web via metro.config.js resolver.
+```
+
+</CodeGroup>
+
+### Available npm scripts
+
+| Script | Command | Description |
+|--------|---------|-------------|
+| `start` | `expo start` | Start Metro bundler (prompts for platform) |
+| `android` | `expo run:android` | Build and run on connected Android device or emulator |
+| `ios` | `expo run:ios` | Build and run on connected iOS device or simulator |
+| `web` | `expo start --web` | Start the web target (native-only modules stubbed) |
+| `lint` | `expo lint` | Run ESLint via `eslint-config-expo` |
+| `test` | `jest` | Run the test suite |
+| `test:coverage` | `jest --coverage` | Run tests with coverage report |
+
+## Why Video Calls Require a Development Build
+
+Debuta uses `react-native-webrtc` for peer-to-peer audio and video calls. This library ships a **native module** — compiled C++ code that must be linked into the iOS or Android binary. Expo Go does not include this module, so WebRTC is stubbed out when running in Expo Go and will show an alert if a call is attempted.
+
+<Warning>
+  To test video or audio calls you **must** run a native development build with `npm run android` or `npm run ios`. The `npx expo start` + Expo Go path will load the stub implementation, which shows a UI but produces no real audio or video.
+</Warning>
+
+To create a development build you only need to run the native build command once. After that, Metro hot-reloads still work as normal.
+
+```bash
+# First-time native build (connects to your running Metro server)
+npm run android   # or: npm run ios
+```
+
+The `app.json` declares all required permissions for both platforms:
+
+- **Android**: `RECORD_AUDIO`, `CAMERA`, `MODIFY_AUDIO_SETTINGS`, `BLUETOOTH`, `INTERNET`, `ACCESS_NETWORK_STATE`, `CHANGE_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `FOREGROUND_SERVICE`
+- **iOS**: `NSCameraUsageDescription`, `NSMicrophoneUsageDescription` (via `infoPlist`)
+
+## Running Tests
+
+```bash
+# Single run
+npm test
+
+# Watch mode (re-runs on file change)
+npm run test:watch
+
+# With coverage report
+npm run test:coverage
+```
+
+Tests use Jest 29 with `jest-environment-node`. The test environment is configured via `babel.config.js`, which applies `babel-preset-expo` along with TypeScript and class-property transforms.
+
+## Babel and Metro Configuration
+
+`babel.config.js` uses `babel-preset-expo` as the base preset and adds three additional Babel plugins:
+
+```js babel.config.js
+module.exports = function (api) {
+  api.cache(true);
+  return {
+    presets: ['babel-preset-expo'],
+    plugins: [
+      ['@babel/plugin-transform-typescript', { isTSX: true, allExtensions: true }],
+      ['@babel/plugin-transform-class-properties', { loose: true }],
+      ['@babel/plugin-transform-private-methods', { loose: true }],
+    ],
+  };
+};
+```
+
+`metro.config.js` extends the default Expo Metro config with a custom resolver that replaces `react-native-webrtc` and `react-native-incall-manager` with an empty module stub when bundling for the `web` platform, preventing build errors from native-only imports.

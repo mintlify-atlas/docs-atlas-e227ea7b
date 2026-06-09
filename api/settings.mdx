@@ -1,0 +1,336 @@
+---
+title: "User Settings and Discovery Preferences API"
+sidebarTitle: "Settings"
+description: "GET, update, and manage Debuta user settings including discovery filters, notification preferences, privacy controls, and password change."
+---
+
+The Settings API exposes the user's `settings` sub-document, which controls how Debuta discovers and presents other profiles. All three endpoints require a valid JWT. Settings are stored as an embedded MongoDB sub-document on the `Usuario` model; `PUT /api/settings` uses a `$set` with dot-notation keys so only the fields you send are overwritten — unmentioned fields retain their current values.
+
+---
+
+## GET /api/settings
+
+Returns the complete settings object for the authenticated user.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Response — 200 OK
+
+```json
+{
+  "settings": {
+    "max_distance": 50,
+    "min_age": 18,
+    "max_age": 40,
+    "show_me": "ALL",
+    "verified_only": false,
+    "has_bio_only": false,
+    "min_photos": 0,
+    "looking_for": "ALL",
+    "interests_filter": [],
+    "notif_matches": true,
+    "notif_messages": true,
+    "notif_recomend": false,
+    "show_distance": true,
+    "show_age": true,
+    "profile_visible": true,
+    "privacy": {
+      "show_job": true,
+      "show_education": true,
+      "show_relationship": true,
+      "show_buscando": true,
+      "show_personal_info": true
+    }
+  }
+}
+```
+
+### curl example
+
+```bash
+curl https://api.debuta.app/api/settings \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+---
+
+## PUT /api/settings
+
+Updates one or more settings fields. Only the fields included in the request body are modified — all others keep their existing values. The `privacy` sub-object is **not** updated via this endpoint; privacy fields live on the `Usuario` document's `settings.privacy` path and must be updated through `PUT /api/users/profile` with a nested `settings.privacy` object.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+### Request body
+
+Send any subset of the following fields:
+
+```json
+{
+  "max_distance": 30,
+  "show_me": "F",
+  "min_age": 22,
+  "max_age": 35,
+  "verified_only": true,
+  "notif_matches": true,
+  "profile_visible": true
+}
+```
+
+### Discovery filter fields
+
+<ParamField body="max_distance" type="number">
+  Maximum distance in kilometres for the discover feed. Default: `50`. Used in a geospatial `$geoWithin $centerSphere` query. Profiles with no location set are always included regardless of this value.
+</ParamField>
+
+<ParamField body="min_age" type="number">
+  Minimum age to show in the discover feed. Default: `18`. Filters by `birth_date`.
+</ParamField>
+
+<ParamField body="max_age" type="number">
+  Maximum age to show in the discover feed. Default: `100`.
+</ParamField>
+
+<ParamField body="show_me" type="string">
+  Gender preference for the discover feed. One of: `M` (masculino), `F` (femenino), `ALL`. Default: `ALL`.
+</ParamField>
+
+### Advanced filter fields
+
+<ParamField body="verified_only" type="boolean">
+  When `true`, the discover feed only returns profiles with `is_verified: true`. Default: `false`.
+</ParamField>
+
+<ParamField body="has_bio_only" type="boolean">
+  When `true`, the discover feed excludes profiles with an empty `bio`. Default: `false`.
+</ParamField>
+
+<ParamField body="min_photos" type="number">
+  Minimum number of gallery photos a profile must have to appear in the discover feed. `0` means no minimum. Default: `0`.
+</ParamField>
+
+<ParamField body="looking_for" type="string">
+  Filter the discover feed by what other users are looking for. One of: `amistad`, `citas`, `serio`, `casual`, `no_lo_se`, `ALL`, or empty string. When `ALL` or empty, no filter is applied. Default: `ALL`.
+</ParamField>
+
+<ParamField body="interests_filter" type="string[]">
+  Array of interest names. When non-empty, only profiles that share at least one of these interests are shown in the discover feed. Example: `["Senderismo", "Jazz"]`. Default: `[]`.
+</ParamField>
+
+### Notification fields
+
+<ParamField body="notif_matches" type="boolean">
+  Receive push notifications when a new match occurs. Default: `true`.
+</ParamField>
+
+<ParamField body="notif_messages" type="boolean">
+  Receive push notifications for new messages. Default: `true`.
+</ParamField>
+
+<ParamField body="notif_recomend" type="boolean">
+  Receive push notifications for profile recommendations. Default: `false`.
+</ParamField>
+
+### Privacy fields
+
+<ParamField body="show_distance" type="boolean">
+  Show the distance badge on the user's profile card in other users' feeds. Default: `true`.
+</ParamField>
+
+<ParamField body="show_age" type="boolean">
+  Show the user's age on their profile card. Default: `true`.
+</ParamField>
+
+<ParamField body="profile_visible" type="boolean">
+  When `false`, the user's profile is hidden from the discover feed for all other users. Default: `true`.
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Configuración guardada",
+  "settings": {
+    "max_distance": 30,
+    "min_age": 22,
+    "max_age": 35,
+    "show_me": "F",
+    "verified_only": true,
+    "has_bio_only": false,
+    "min_photos": 0,
+    "looking_for": "ALL",
+    "interests_filter": [],
+    "notif_matches": true,
+    "notif_messages": true,
+    "notif_recomend": false,
+    "show_distance": true,
+    "show_age": true,
+    "profile_visible": true,
+    "privacy": {
+      "show_job": true,
+      "show_education": true,
+      "show_relationship": true,
+      "show_buscando": true,
+      "show_personal_info": true
+    }
+  }
+}
+```
+
+<ResponseField name="message" type="string">
+  Confirmation string: `"Configuración guardada"`.
+</ResponseField>
+
+<ResponseField name="settings" type="object">
+  The full updated settings object, including fields that were not changed in this request.
+</ResponseField>
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `401`  | Missing or invalid JWT |
+| `500`  | Internal server error |
+
+### curl example
+
+```bash
+curl -X PUT https://api.debuta.app/api/settings \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "max_distance": 30,
+    "show_me": "F",
+    "min_age": 22,
+    "max_age": 35,
+    "verified_only": true,
+    "notif_recomend": true
+  }'
+```
+
+---
+
+## PUT /api/settings/password
+
+Changes the password for a local (email + password) account. The current password is verified before the new one is saved. The bcrypt `pre-save` hook on the `Usuario` model automatically hashes the new password.
+
+**Auth required:** Yes — `Authorization: Bearer <token>`
+
+<Note>
+  This endpoint is for users with `auth_provider: 'local'` only. Social auth accounts (Google / Facebook) do not have a local password — calling this endpoint for them will fail at the `compararPassword` step and return `400`.
+</Note>
+
+### Request body
+
+```json
+{
+  "password_actual": "contraseñaActual123",
+  "password_nueva": "nuevaContraseña456"
+}
+```
+
+<ParamField body="password_actual" type="string" required>
+  The user's current plaintext password. Compared against the stored bcrypt hash via `usuario.compararPassword()`.
+</ParamField>
+
+<ParamField body="password_nueva" type="string" required>
+  The desired new password. Minimum 6 characters. Stored as a bcrypt hash (cost 12).
+</ParamField>
+
+### Response — 200 OK
+
+```json
+{
+  "message": "Contraseña actualizada correctamente"
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400`  | `password_actual` or `password_nueva` is missing |
+| `400`  | `password_nueva` is shorter than 6 characters |
+| `400`  | `password_actual` does not match the stored hash |
+| `401`  | Missing or invalid JWT |
+| `500`  | Internal server error |
+
+### curl example
+
+```bash
+curl -X PUT https://api.debuta.app/api/settings/password \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "password_actual": "contraseñaActual123",
+    "password_nueva": "nuevaContraseña456"
+  }'
+```
+
+---
+
+## Privacy sub-fields reference
+
+The `settings.privacy` object controls the visibility of specific profile sections to other users. These fields are stored inside `settings.privacy` on the `Usuario` document and are updated via `PUT /api/users/profile` (not via `PUT /api/settings`).
+
+<ParamField body="privacy.show_job" type="boolean">
+  Show `job_title` and `company` on the public profile. Default: `true`.
+</ParamField>
+
+<ParamField body="privacy.show_education" type="boolean">
+  Show `education` on the public profile. Default: `true`.
+</ParamField>
+
+<ParamField body="privacy.show_relationship" type="boolean">
+  Show `relationship_status` on the public profile. Default: `true`.
+</ParamField>
+
+<ParamField body="privacy.show_buscando" type="boolean">
+  Show the `buscando` ("looking for") field on the public profile. Default: `true`.
+</ParamField>
+
+<ParamField body="privacy.show_personal_info" type="boolean">
+  Master toggle for personal info fields: `religion`, `zodiac`, `smoke`, `drink`, `height`, `exercise`. When `false`, all of these are hidden. Default: `true`.
+</ParamField>
+
+### Example — update privacy via PUT /api/users/profile
+
+```bash
+curl -X PUT https://api.debuta.app/api/users/profile \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "settings": {
+      "privacy": {
+        "show_job": false,
+        "show_personal_info": false
+      }
+    }
+  }'
+```
+
+---
+
+## Settings schema defaults
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_distance` | Number | `50` | km radius for discovery |
+| `min_age` | Number | `18` | Minimum age filter |
+| `max_age` | Number | `100` | Maximum age filter |
+| `show_me` | String | `"ALL"` | Gender preference (`M` / `F` / `ALL`) |
+| `verified_only` | Boolean | `false` | Only show verified profiles |
+| `has_bio_only` | Boolean | `false` | Only show profiles with a bio |
+| `min_photos` | Number | `0` | Minimum gallery photos required |
+| `looking_for` | String | `"ALL"` | Filter by `buscando` value |
+| `interests_filter` | String[] | `[]` | Filter by shared interests |
+| `notif_matches` | Boolean | `true` | Match notifications |
+| `notif_messages` | Boolean | `true` | Message notifications |
+| `notif_recomend` | Boolean | `false` | Recommendation notifications |
+| `show_distance` | Boolean | `true` | Show distance badge |
+| `show_age` | Boolean | `true` | Show age on profile card |
+| `profile_visible` | Boolean | `true` | Appear in other users' feeds |
+| `privacy.show_job` | Boolean | `true` | Show job info |
+| `privacy.show_education` | Boolean | `true` | Show education |
+| `privacy.show_relationship` | Boolean | `true` | Show relationship status |
+| `privacy.show_buscando` | Boolean | `true` | Show looking-for field |
+| `privacy.show_personal_info` | Boolean | `true` | Show personal info block |
