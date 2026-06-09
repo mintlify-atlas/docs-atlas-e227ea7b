@@ -1,7 +1,7 @@
 ---
-title: "Authentication and Authorization in Debuta"
+title: "Debuta JWT Authentication and Route Authorization Guide"
 sidebarTitle: "Authentication"
-description: "How Debuta authenticates users with JWT tokens, enforces role-based access control, and protects API routes with the verificarToken, soloAdmin, and soloAsociado middlewares."
+description: "How Debuta authenticates requests with JWT, enforces role-based access control, and protects routes with verificarToken, soloAdmin, and soloAsociado."
 ---
 
 Debuta uses **JSON Web Tokens (JWT)** for stateless authentication. After a successful login, the server issues an `access_token` that the client includes in subsequent requests as a `Bearer` token. The same token is also used to authenticate Socket.io connections. Role-based access control is layered on top with two additional middleware guards — `soloAdmin` and `soloAsociado`.

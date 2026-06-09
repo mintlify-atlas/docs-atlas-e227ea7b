@@ -1,7 +1,7 @@
 ---
-title: "Debuta Admin Panel: Features and Access"
+title: "Debuta Admin Panel: Complete Feature Overview and Access"
 sidebarTitle: "Overview"
-description: "The Debuta admin panel is a web-based dashboard for managing users, moderation, analytics, and support tickets. Served at /admin by the backend."
+description: "The Debuta admin panel is a vanilla JS dashboard for managing users, moderation, analytics, and support tickets — served at /admin by the backend."
 ---
 
 The Debuta admin panel is a vanilla JavaScript single-page application served statically by the backend at `http://your-server/admin`. It provides a complete management interface for the platform — from user moderation and reports to analytics and support ticket resolution — without requiring a separate frontend deployment.
@@ -39,7 +39,7 @@ Any request made with a regular user token — even a valid one — will be deni
 
 <CardGroup cols={2}>
   <Card title="Dashboard" icon="chart-bar">
-    Real-time KPI cards showing online users, total users, new registrations today and this week, total matches, messages sent, pending reports, active associates, and open support tickets. Includes a registration growth line chart (configurable to 7, 30, or 90 days) and a gender distribution doughnut chart. Stats refresh automatically every 30 seconds.
+    Real-time KPI cards showing online users, total users, new registrations today and this week, total matches, messages sent, pending reports, and active associates. Includes a registration growth line chart (configurable to 7, 30, or 90 days) and a gender distribution doughnut chart. Stats refresh automatically every 30 seconds.
   </Card>
   <Card title="Users" icon="users">
     Paginated, filterable table of all registered accounts. Search by name, email, or username; filter by role (`user`, `admin`, `asociado`) or account status. Open a detail modal to view profile data, verification status, match and message counts, and perform role changes, account activation/deactivation, or permanent deletion.

@@ -1,7 +1,7 @@
 ---
-title: "Facial Verification API — Identity Confirmation"
+title: "Facial Verification API — Face Validation and Login"
 sidebarTitle: "Facial"
-description: "Four endpoints for facial recognition: verify a face exists, register a facial reference photo, confirm login with face comparison, and update a stored photo."
+description: "Verify, register, and compare facial photos via base64 JSON. Four endpoints cover identity checks at registration and as a login second factor."
 ---
 
 Debuta uses facial verification as a trust layer in two distinct flows: **registration** (where a face is validated and saved before the account is fully created) and **login** (where the stored reference photo is compared against a live image as a second factor). All image data is transmitted as a base64-encoded string in the JSON request body — no multipart upload is used for these endpoints.

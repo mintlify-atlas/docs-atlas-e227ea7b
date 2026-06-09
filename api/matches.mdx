@@ -1,7 +1,7 @@
 ---
 title: "Matches API — Mutual Likes, Feed, and Date Coordination"
 sidebarTitle: "Matches"
-description: "Endpoints for liking and disliking users, listing mutual matches with message previews, and managing date suggestions: accept, reject, or propose a new venue."
+description: "Endpoints for liking and disliking users, listing mutual matches with message previews, and managing date suggestions: accept, reject, or swap venue."
 ---
 
 A **match** in Debuta is created when two users have each liked the other. The Matches API covers the full lifecycle: sending likes and dislikes from the swipe feed, fetching the list of mutual matches for the chat inbox, and coordinating in-app date suggestions at a partner restaurant. Date suggestions themselves are triggered automatically by the server after 5 messages — not by a REST call — but this API lets users respond to them.

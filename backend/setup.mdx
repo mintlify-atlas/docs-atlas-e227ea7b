@@ -1,7 +1,7 @@
 ---
-title: "Running the Debuta Backend Server Locally"
+title: "Debuta Backend: Install, Configure, and Run the API Server"
 sidebarTitle: "Setup"
-description: "Install and run the Debuta Express + Socket.io backend server. Covers dependencies, MongoDB connection, Cloudinary setup, and development vs. production modes."
+description: "Install and run the Debuta Express and Socket.io backend. Covers npm scripts, MongoDB setup, Cloudinary, and development vs. production modes."
 ---
 
 The Debuta backend is an **Express.js** HTTP server with **Socket.io** mounted on the same Node.js `http.Server` instance. It connects to **MongoDB Atlas** via Mongoose, offloads all photo storage to **Cloudinary**, and sends transactional emails (password resets) through **Nodemailer** over Gmail SMTP. A static admin panel is also served directly from the same process at the `/admin` path.
@@ -78,7 +78,7 @@ Before running the server, make sure the following are in place:
 
 ## How the Server Starts
 
-`server.js` is the entry point. It loads the environment with `dotenv`, creates a Node.js `http.Server` from the Express `app`, initialises Socket.io on that server, then connects to MongoDB with an exponential-backoff retry loop (up to 5 attempts, starting at 3 s). The HTTP server begins listening only after the MongoDB connection is established.
+`server.js` is the entry point. It loads the environment with `dotenv`, creates a Node.js `http.Server` from the Express `app`, initialises Socket.io on that server, then connects to MongoDB with a linear-backoff retry loop (up to 5 attempts: 3 s, 6 s, 9 s, 12 s, 15 s). The HTTP server begins listening only after the MongoDB connection is established.
 
 ```js
 const http = require('http');
@@ -89,8 +89,8 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 initSocket(server); // Socket.io shares the same HTTP server
 
-await mongoose.connect(process.env.MONGO_URI);
-server.listen(PORT, '0.0.0.0');
+// connectWithRetry implements a linear backoff: 3 s, 6 s, 9 s, 12 s, 15 s
+await connectWithRetry(); // connects to MongoDB, then calls server.listen()
 ```
 
 ## Directory Structure

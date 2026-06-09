@@ -1,7 +1,7 @@
 ---
-title: "Posts API — Profile Wall and Social Feed"
+title: "Posts API — Profile Wall, Likes, and Image Uploads"
 sidebarTitle: "Posts"
-description: "CRUD endpoints for user posts on profile walls: create with optional image, list posts, toggle likes on posts, and delete posts. All require authentication."
+description: "CRUD endpoints for user posts: create with optional image, list your own or any user's posts, toggle likes, and delete. All routes require a JWT."
 ---
 
 Every Debuta user has a profile wall where they can share posts — text, an image, or both. These endpoints cover the full lifecycle of a post: creation (with optional Cloudinary image upload), fetching your own or another user's timeline, toggling likes, and deletion. All five routes require a valid JWT in the `Authorization` header.
@@ -81,7 +81,7 @@ Every endpoint that returns a post (or array of posts) uses the following shape:
 
 ### POST /api/posts
 
-Creates a new post. The request body must contain at least a non-empty `text` field or a `file` attachment — sending neither returns `400`. When a file is included, it is uploaded to Cloudinary before the post is saved.
+Creates a new post. The request body must contain at least a non-empty `text` field or a `photo` attachment — sending neither returns `400`. When a file is included, it is uploaded to Cloudinary before the post is saved.
 
 **Authentication:** Bearer JWT required.
 
@@ -90,11 +90,11 @@ Creates a new post. The request body must contain at least a non-empty `text` fi
 #### Request body
 
 <ParamField body="text" type="string" required>
-  The text content of the post. Maximum 500 characters. Required if no `file` is supplied.
+  The text content of the post. Maximum 500 characters. Required if no `photo` is supplied.
 </ParamField>
 
-<ParamField body="file" type="file">
-  Optional image file. Sent as a multipart field named `file`. Uploaded to Cloudinary automatically.
+<ParamField body="photo" type="file">
+  Optional image file. Sent as a multipart field named `photo`. Accepted types: JPEG, PNG, WebP, HEIC. Maximum 10 MB. Uploaded to Cloudinary automatically.
 </ParamField>
 
 #### Response `201`
@@ -130,7 +130,7 @@ Creates a new post. The request body must contain at least a non-empty `text` fi
 
 | Status | Condition |
 |--------|-----------|
-| `400`  | Neither `text` nor `file` was provided. |
+| `400`  | Neither `text` nor `photo` was provided. |
 | `401`  | Missing or invalid JWT. |
 | `500`  | Cloudinary upload failed or internal server error. |
 
@@ -147,7 +147,7 @@ curl -X POST https://api.debuta.app/api/posts \
 curl -X POST https://api.debuta.app/api/posts \
   -H "Authorization: Bearer <token>" \
   -F "text=Look at this amazing restaurant 🍷" \
-  -F "file=@/path/to/photo.jpg"
+  -F "photo=@/path/to/photo.jpg"
 ```
 
 ---

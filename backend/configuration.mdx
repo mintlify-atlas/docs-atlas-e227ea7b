@@ -1,7 +1,7 @@
 ---
 title: "Debuta Backend Environment Configuration Reference"
 sidebarTitle: "Configuration"
-description: "Complete reference for all environment variables in the Debuta backend .env file, including MongoDB, JWT, Cloudinary, email, CORS, and social OAuth settings."
+description: "Complete reference for every environment variable in the Debuta backend .env file: MongoDB, JWT, Cloudinary, email, CORS, and social OAuth."
 ---
 
 The Debuta backend is configured entirely through environment variables loaded from a `.env` file at startup using `dotenv`. Copy `.env.example` to `.env` and fill in your own values before starting the server. The sections below document every variable, its purpose, and its expected format.
@@ -32,7 +32,7 @@ The Debuta backend is configured entirely through environment variables loaded f
   mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<dbname>?retryWrites=true&w=majority
   ```
 
-  The server uses a linear backoff retry loop (up to 5 attempts, 3 s apart) when the initial connection fails, so transient DNS or network issues at startup are handled gracefully.
+  The server uses a linear backoff retry loop (up to 5 attempts: 3 s, 6 s, 9 s, 12 s, 15 s) when the initial connection fails, so transient DNS or network issues at startup are handled gracefully.
 </ParamField>
 
 ## Security

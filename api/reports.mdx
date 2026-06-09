@@ -1,7 +1,7 @@
 ---
-title: "User Reporting and Safety API"
+title: "User Reporting API — Flag Profiles for Safety Review"
 sidebarTitle: "Reports"
-description: "POST /api/report/:userId to report another user for inappropriate behavior, and GET /api/report/mis-reportes to view your submitted reports."
+description: "Submit a report against another user with a motivo category, automatically dissolve the match, and retrieve your submitted reports. JWT required."
 ---
 
 Debuta's reporting system lets users flag inappropriate behavior directly from any profile. When a report is submitted, the match between the two users is automatically dissolved and the report enters an admin review queue. Both endpoints require authentication and operate only on the authenticated user's own reports — users cannot view or modify each other's reports.

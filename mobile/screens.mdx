@@ -1,5 +1,5 @@
 ---
-title: "Debuta App Screens and Navigation Structure"
+title: "Debuta Mobile App: Screens and Navigation Reference"
 sidebarTitle: "Screens"
 description: "Full reference for every screen in the Debuta mobile app — onboarding, discover, matches, chat, profile, settings, partner portal, and admin views."
 ---
@@ -176,6 +176,15 @@ A minimal admin screen accessible to accounts with `rol: 'admin'`. The sub-stack
 Core types used across screens are defined in `components/types/index.ts`:
 
 ```ts components/types/index.ts
+export interface Afinidad {
+  score: number;
+  amigosFB: number;
+  interesesComun: number;
+  ciudadComun: boolean;
+  edadSimilar: boolean;
+  resumen: string | null;
+}
+
 export interface UserProfile {
   id: string;
   username: string;
@@ -185,8 +194,20 @@ export interface UserProfile {
   birth_date: string;
   gender: string;
   profile_picture: { url: string; public_id: string } | string | null;
+  cover_photo?: { url: string; public_id: string } | null;
   photos?: { url: string; public_id: string }[];
+  latitude: number | null;
+  longitude: number | null;
+  is_verified?: boolean;
+  ciudad?: string;
+  pais?: string;
+  location_label?: string;
   interests: { name: string; icon: string }[];
+  job_title?: string;
+  company?: string;
+  education?: string;
+  relationship_status?: string;
+  website?: string;
   afinidad?: Afinidad; // present in discover context only
 }
 
@@ -214,4 +235,4 @@ export interface Message {
 }
 ```
 
-The `Afinidad` field on `UserProfile` is populated only by the discover endpoint and contains a `score`, `amigosFB` (mutual Facebook friends), `interesesComun` (common interests count), and a human-readable `resumen` string.
+The `Afinidad` field on `UserProfile` is populated only by the discover endpoint and contains a `score`, `amigosFB` (mutual Facebook friends), `interesesComun` (common interests count), `ciudadComun` (whether users share a city), `edadSimilar` (whether ages are similar), and a human-readable `resumen` string (or `null` if no summary was generated).

@@ -1,7 +1,7 @@
 ---
-title: "Likes API — See Who Has Liked Your Profile"
+title: "Likes API — View Users Who Have Liked Your Profile"
 sidebarTitle: "Likes"
-description: "GET /api/likes returns the list of users who liked your profile but are not yet a mutual match. Requires authentication. Powers the LikesScreen in the mobile app."
+description: "GET /api/likes returns users who liked your profile but aren't yet a mutual match. Requires authentication. Powers the LikesScreen in the mobile app."
 ---
 
 The Likes API exposes a single endpoint that returns every user who has sent you a like but whom you have not yet liked back — meaning no mutual match exists yet. This powers the **LikesScreen** in the Debuta mobile app, which lets users browse their admirers and decide whether to like them back (creating a match) or ignore them.
@@ -56,8 +56,7 @@ Returns all received likes that have not yet become mutual matches.
   Array of received-like objects. Empty array `[]` if no pending likes exist.
 
   <ResponseField name="matchId" type="string">
-    ID of the Match document that recorded this like interaction. Pass this as
-    `:targetId` to `POST /api/matches/like/:targetId` to reciprocate.
+    ID of the Match document that recorded this like interaction.
   </ResponseField>
   <ResponseField name="usuario" type="object">
     Profile of the user who liked you.

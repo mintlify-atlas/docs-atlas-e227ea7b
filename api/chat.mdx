@@ -1,7 +1,7 @@
 ---
 title: "Chat REST API — Message History and Image Upload"
 sidebarTitle: "Chat"
-description: "REST endpoints for fetching paginated message history between matched users and uploading chat images to Cloudinary. Real-time messaging uses Socket.io, not REST."
+description: "REST endpoints for fetching paginated message history between matched users and uploading chat images to Cloudinary. Real-time messaging uses Socket.io."
 ---
 
 The Chat REST API handles two concerns: retrieving persisted message history for a conversation and uploading images before sending them as chat messages. All real-time message delivery — including typing indicators and read receipts — runs over Socket.io. The HTTP `POST /api/chat/:userId` endpoint exists as a fallback only; prefer the `mensaje:enviar` socket event in normal operation.
